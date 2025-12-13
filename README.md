@@ -8,12 +8,11 @@ Assessment II
 
 This assessment evaluates your understanding of the Infrastructure as Code concepts and AWS AI services covered these past several weeks. Automation of application deployment and integration of AI capabilities is critical to designing reliable, reusable and scalable architecture.
 
-Using Terraform to provision resources, and AWS AI services to enhance your application, you will deploy a Flask backend with a React frontend of your choosing, between the Todo-List application which uses MySQL and the User DB application which uses PSQL.
+Using Terraform to provision resources, and AWS AI services to enhance your application, you will deploy a React frontend utilizing API endpoints to interact with a database and AWS AI services.  
 
-- https://github.com/codeplatoon-devops/todolist-flask
-- https://github.com/codeplatoon-devops/user-db-flask.git
+We've provided a React frontend in the resources directory that is ready for integration AWS AI services (Lex, Polly, Comprehend, and Rekognition).  We've also provided a starter template for a Flask backend, which you can disregard if you decide to use API gateway.
 
-Both Flask applications are simple applications with basic logic built in. Your goal is to provision the infrastructure to support it, build a React frontend, and integrate AWS AI services (Lex, Polly, Comprehend, and Rekognition) to enhance the user experience.
+You're welcome to use any resources we've created up til now (Flask apps, React apps, terraform files, etc).  The goal of this assessment is to test your ability to connect everything you've learned so far and to establish a foundation for building out the rest of an automated application deployment infrastructure by the end of this cohort.
 
 ---
 
