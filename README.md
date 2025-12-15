@@ -31,18 +31,16 @@ We can outline these objectives to give you an idea of what will be scored.
 **1. Terraform Configuration (20%)**
    - Set up and utilize a remote backend with DynamoDB & S3 
    - Write a terraform configuration to create at least one EC2 instance
-   - Write terraform configurations for other resources necessary for allowing public access to the application (Security Groups, VPC components, etc.)
+   - Write necessary terraform configurations for allowing public access (Security Groups, VPC components, etc.)
    - Include appropriate outputs and validation
 
 **2. AWS AI Services Integration (25%)**
 
-   - Integrate at least two of the following AWS AI services into your application:
-      - Amazon Lex: Chatbot interface for user interactions
-      - Amazon Polly: Text-to-speech for audio responses
-      - Amazon Comprehend: Sentiment analysis or entity recognition on user input
-      - Amazon Rekognition: Image analysis (labels, faces, text detection)
-   - Integrate at least two AWS Lambda functions for serverless processing, API integration, or event-driven workflows
-   - Configure proper IAM roles and permissions for AI services and Lambda functions
+   - Integrate any of the following AWS AI services into your application:
+      - Amazon Lex with intents & fallback intent: Chatbot interface for user interactions
+      - Amazon Polly & Amazon Transcribe: Text-to-speech and speech-to-text
+      - Amazon Comprehend & Rekognition: Sentiment & Image analysis
+   - Configure proper IAM roles and permissions for AI services
 
 **3. Database Configuration (15%)**
 
@@ -58,8 +56,8 @@ We can outline these objectives to give you an idea of what will be scored.
    - Deployed API endpoints for CRUD'ing DB and invoking AWS AI services either via Flask or API Gateway
       - Flask backend is deployed to EC2 and configured to be accessible via API (if using Flask)
       - API Gateway deployment is configured via Terraform (if using Lambdas + API Gateway)
-   - React frontend is built and served (can be hosted on S3 with CloudFront, or served from EC2)
-   - Application demonstrates successful integration with at least two AWS AI services and at least two Lambdas
+   - React frontend is built and served (can be hosted on S3 bucket, or served from EC2)
+   - Application demonstrates successful integration with AWS AI services
    - EC2 instance can be SSHed onto, and CLI commands can be used to confirm services & dependencies
 
 **5. Documentation & Presentation (20%)**
@@ -79,7 +77,7 @@ We can outline these objectives to give you an idea of what will be scored.
 
 ---
 
-# Deliverables
+## Deliverables
 
 Systems and applications are only as effective as their ease of use. All of the following should be provided in a way that a team member or colleague can repeat your entire flow.
 
@@ -97,7 +95,7 @@ Remember, deliverables should not only be created with functionality and perform
 
 ---
 
-# Timeline
+## Timeline
 
 You'll have one week to complete the assessment. Points will be docked for every additional class day the assessment is not completed and presented. Here are some **pro tips** to help keep you moving:
 
@@ -111,6 +109,15 @@ You'll have one week to complete the assessment. Points will be docked for every
 - Remember, you have flexibility not only in how you implement requirements, but how you present as well. For example, when demonstrating Lex integration, you can show chat interactions in the UI or use AWS Console to verify bot configurations.
 
 Good luck!
+
+---
+
+## Hints
+
+- Time management is key.  Go for the implementations that you're most comfortable or familiar with.  You can always add on later
+- You don't necessarily need to create all resources.  Working resources like VPCs, security groups, roles/policies, can be shared and imported.
+- A working demo is live, tagged with 'aico-aii-demo'.  You can view resources tagged with this in AWS console to inspect details like what VPC it's using
+- Ask questions and help one another out as needed.  This *isn't* cheating.  Technical abilities aren't the only skills that matter.  Collaboration and communication are also crucial skills for employment.
 
 ---
 
