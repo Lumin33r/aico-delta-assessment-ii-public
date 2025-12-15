@@ -30,7 +30,6 @@ We can outline these objectives to give you an idea of what will be scored.
 
 **1. Terraform Configuration (20%)**
    - Set up and utilize a remote backend with DynamoDB & S3 (you can add and leave this commented out to keep state local)
-   - Write a terraform configuration to create at least one EC2 instance
    - Write necessary terraform configurations for allowing public access (Security Groups, VPC components, etc.)
    - Include appropriate outputs and validation
    - Resources can cleanly be destroyed with `terraform destroy` and recreated with `terraform apply`
