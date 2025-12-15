@@ -58,7 +58,6 @@ We can outline these objectives to give you an idea of what will be scored.
       - API Gateway deployment is configured via Terraform (if using Lambdas + API Gateway)
    - React frontend is built and served (can be hosted on S3 bucket, or served from EC2)
    - Application demonstrates successful integration with AWS AI services
-   - EC2 instance can be SSHed onto, and CLI commands can be used to confirm services & dependencies
 
 **5. Documentation & Presentation (20%)**
 
