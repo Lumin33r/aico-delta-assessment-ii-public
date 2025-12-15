@@ -68,10 +68,11 @@ We can outline these objectives to give you an idea of what will be scored.
 
 **6. Stretch Goals (Bonus Points)**
 
-   - Additional points for integrating third and fourth AWS services
-   - Use Gunicorn for a more secure Flask deployment
-   - Implement CI/CD pipeline for automated deployments
-   - Create a serverless architecture using Lambda for API endpoints or processing
+   - Up to 2 additional points for integrating second and third set of AWS AI services
+   - Serve Flask on a separate private EC2 with Gunicorn for a more secure deployment
+   - Implement CI/CD pipeline by automating deployment with a single action and adding clear logging & tests
+   - Implement Cloudfront with S3 bucket deployment
+   - Use either modules or meta arguments in your Terraform files
    - Present early (1 additional point per # days early)
 
 ---
