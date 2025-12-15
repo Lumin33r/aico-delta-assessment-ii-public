@@ -122,4 +122,33 @@ Good luck!
 
 ---
 
+## Troubleshooting
+
+### API Gateway URL not found
+
+If you get an error about API Gateway URL:
+1. Check that Terraform deployment completed successfully
+2. Verify `outputs.json` exists and contains `api_gateway_url`
+3. Manually get the URL: `cd terraform && terraform output api_gateway_url`
+
+### CORS errors in browser
+
+- Verify API Gateway has OPTIONS methods configured
+- Check that Lambda functions return CORS headers
+- Ensure frontend is using the correct API Gateway URL
+
+### Lambda function errors
+
+- Check CloudWatch Logs for the specific Lambda function
+- Verify IAM permissions for DynamoDB and AI services
+- Ensure Lambda environment variables are set correctly
+
+### Frontend not loading
+
+- Verify S3 bucket has static website hosting enabled
+- Check S3 bucket policy allows public read access
+- Ensure frontend build completed successfully
+
+---
+
 [Getting Started](./getting_started.md)
