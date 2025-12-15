@@ -123,12 +123,23 @@ Good luck!
 
 ## Troubleshooting
 
-### API Gateway URL not found
+### EC2 Connection Issues
 
-If you get an error about API Gateway URL:
-1. Check that Terraform deployment completed successfully
-2. Verify `outputs.json` exists and contains `api_gateway_url`
-3. Manually get the URL: `cd terraform && terraform output api_gateway_url`
+- Verify security group allows SSH (port 22) from your IP
+- Check SSH key permissions: `chmod 400 ~/.ssh/<key>.pem`
+- Verify key name matches AWS EC2 key pair name (without .pem)
+
+### Flask or nginx Service Issues
+
+- Check Flask status with something like `ssh -i ~/.ssh/<key>.pem ec2-user@<ec2-ip> 'sudo systemctl status flask-app'`
+- Check nginx status `ssh -i ~/.ssh/<key>.pem ec2-user@<ec2-ip> 'sudo systemctl status nginx'`
+- Try other commands like testing the nginx config with `'sudo nginx -t'` or viewing logs with `'sudo tail -f /var/log/nginx/error.log'`
+
+### API Gateway URL not found or endpoint errors
+
+- Check if the stage exists
+- Verify `outputs.json` exists and contains `api_gateway_url`
+- Manually get the URL: `cd terraform && terraform output api_gateway_url`
 
 ### CORS errors in browser
 
@@ -147,6 +158,18 @@ If you get an error about API Gateway URL:
 - Verify S3 bucket has static website hosting enabled
 - Check S3 bucket policy allows public read access
 - Ensure frontend build completed successfully
+
+### Database Connection Issues
+
+- Verify PostgreSQL is running: `sudo systemctl status postgresql`
+- Check database exists: `sudo -u postgres psql -l`
+- Verify user permissions
+
+### GitHub Access Issues
+
+- Ensure EC2 instance has SSH keys configured for GitHub
+- For private repos, add SSH key to GitHub account
+- Test: `ssh -T git@github.com` from EC2
 
 ---
 
