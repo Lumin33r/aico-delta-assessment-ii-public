@@ -1,19 +1,21 @@
 # =============================================================================
-# Variables Configuration
+# Terraform Variables
+# =============================================================================
+# Input variables for the AI Personal Tutor infrastructure
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# General Settings
+# General Configuration
 # -----------------------------------------------------------------------------
 
-variable "project_name" {
-  description = "Name of the project, used for resource naming"
+variable "aws_region" {
+  description = "AWS region to deploy resources"
   type        = string
-  default     = "ai-tutor"
+  default     = "us-west-2"
 }
 
 variable "environment" {
-  description = "Environment name (dev, staging, prod)"
+  description = "Environment name (e.g., dev, staging, prod)"
   type        = string
   default     = "dev"
 
@@ -23,20 +25,36 @@ variable "environment" {
   }
 }
 
-variable "aws_region" {
-  description = "AWS region for resources"
+variable "project_name" {
+  description = "Name of the project for resource naming"
   type        = string
-  default     = "us-east-1"
+  default     = "ai-tutor"
+}
+
+variable "tags" {
+  description = "Common tags to apply to all resources"
+  type        = map(string)
+  default = {
+    Project     = "ai-personal-tutor"
+    ManagedBy   = "terraform"
+    Application = "podcast-tutor"
+  }
 }
 
 # -----------------------------------------------------------------------------
-# VPC Settings
+# Networking Configuration
 # -----------------------------------------------------------------------------
 
 variable "vpc_cidr" {
-  description = "CIDR block for VPC"
+  description = "CIDR block for the VPC"
   type        = string
   default     = "10.0.0.0/16"
+}
+
+variable "availability_zones" {
+  description = "List of availability zones to use"
+  type        = list(string)
+  default     = ["us-west-2a", "us-west-2b"]
 }
 
 variable "public_subnet_cidrs" {
@@ -52,7 +70,7 @@ variable "private_subnet_cidrs" {
 }
 
 # -----------------------------------------------------------------------------
-# EC2 Settings
+# EC2 Configuration
 # -----------------------------------------------------------------------------
 
 variable "instance_type" {
@@ -61,78 +79,106 @@ variable "instance_type" {
   default     = "t3.medium"
 }
 
+variable "ami_id" {
+  description = "AMI ID for EC2 instances (Amazon Linux 2023)"
+  type        = string
+  default     = "" # Will use data source if not specified
+}
+
 variable "key_name" {
-  description = "SSH key pair name for EC2 instances"
+  description = "Name of the SSH key pair for EC2 access"
   type        = string
   default     = ""
 }
 
-variable "ssh_allowed_cidr" {
-  description = "CIDR block allowed for SSH access"
-  type        = string
-  default     = "0.0.0.0/0"
+variable "min_instances" {
+  description = "Minimum number of instances in ASG"
+  type        = number
+  default     = 1
+}
+
+variable "max_instances" {
+  description = "Maximum number of instances in ASG"
+  type        = number
+  default     = 3
+}
+
+variable "desired_capacity" {
+  description = "Desired number of instances in ASG"
+  type        = number
+  default     = 1
 }
 
 # -----------------------------------------------------------------------------
-# Lex Bot Settings
-# -----------------------------------------------------------------------------
-
-variable "lex_bot_name" {
-  description = "Name for the Lex bot"
-  type        = string
-  default     = "AITutor"
-}
-
-variable "lex_bot_locale" {
-  description = "Locale for Lex bot"
-  type        = string
-  default     = "en_US"
-}
-
-# -----------------------------------------------------------------------------
-# S3 Settings
-# -----------------------------------------------------------------------------
-
-variable "audio_bucket_name" {
-  description = "S3 bucket name for audio storage (will have suffix added)"
-  type        = string
-  default     = "ai-tutor-audio"
-}
-
-# -----------------------------------------------------------------------------
-# Ollama Settings
+# Ollama Configuration
 # -----------------------------------------------------------------------------
 
 variable "ollama_model" {
-  description = "Ollama model to use for generation"
+  description = "Ollama model to use for content generation"
   type        = string
-  default     = "llama3.2"
+  default     = "llama3.2:1b"
+}
+
+# -----------------------------------------------------------------------------
+# S3 Configuration
+# -----------------------------------------------------------------------------
+
+variable "audio_bucket_name" {
+  description = "Name for the S3 bucket storing audio files (must be globally unique)"
+  type        = string
+  default     = "" # Will be auto-generated if not specified
 }
 
 # -----------------------------------------------------------------------------
 # Feature Flags
 # -----------------------------------------------------------------------------
 
-variable "enable_nat_gateway" {
-  description = "Enable NAT Gateway for private subnet internet access"
-  type        = bool
-  default     = false
-}
-
-variable "enable_bastion" {
-  description = "Enable bastion host for SSH access"
-  type        = bool
-  default     = false
-}
-
 variable "create_lex_bot" {
-  description = "Create Amazon Lex bot resources"
+  description = "Whether to create the Lex bot resources"
   type        = bool
   default     = true
 }
 
 variable "create_cognito" {
-  description = "Create Cognito Identity Pool for frontend Lex access"
+  description = "Whether to create Cognito resources for authentication"
   type        = bool
   default     = true
+}
+
+variable "enable_nat_gateway" {
+  description = "Whether to create NAT Gateway for private subnets"
+  type        = bool
+  default     = false # Set to true for production
+}
+
+# -----------------------------------------------------------------------------
+# Backend API Configuration
+# -----------------------------------------------------------------------------
+
+variable "backend_port" {
+  description = "Port the backend API listens on"
+  type        = number
+  default     = 8000
+}
+
+variable "health_check_path" {
+  description = "Path for ALB health checks"
+  type        = string
+  default     = "/health"
+}
+
+# -----------------------------------------------------------------------------
+# Lambda Configuration
+# -----------------------------------------------------------------------------
+
+variable "lambda_timeout" {
+  description = "Timeout in seconds for Lambda functions"
+  type        = number
+  default     = 30
+}
+
+variable "lambda_memory" {
+  description = "Memory allocation for Lambda functions in MB"
+  type        = number
+  default     = 256
 }

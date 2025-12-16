@@ -1,13 +1,15 @@
 # =============================================================================
 # IAM Roles and Policies
 # =============================================================================
+# IAM resources for EC2 backend instances
+# =============================================================================
 
 # -----------------------------------------------------------------------------
-# EC2 Instance Role (Backend)
+# IAM Role: Backend EC2 Instances
 # -----------------------------------------------------------------------------
 
-resource "aws_iam_role" "backend_ec2" {
-  name = "${local.name_prefix}-backend-ec2-role"
+resource "aws_iam_role" "backend" {
+  name = "${var.project_name}-${var.environment}-backend-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -21,39 +23,28 @@ resource "aws_iam_role" "backend_ec2" {
       }
     ]
   })
-}
 
-resource "aws_iam_instance_profile" "backend" {
-  name = "${local.name_prefix}-backend-profile"
-  role = aws_iam_role.backend_ec2.name
-}
-
-# Polly access for TTS
-resource "aws_iam_role_policy" "backend_polly" {
-  name = "${local.name_prefix}-polly-policy"
-  role = aws_iam_role.backend_ec2.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "polly:SynthesizeSpeech",
-          "polly:DescribeVoices",
-          "polly:GetLexicon",
-          "polly:ListLexicons"
-        ]
-        Resource = "*"
-      }
-    ]
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-backend-role"
   })
 }
 
-# S3 access for audio storage
+# -----------------------------------------------------------------------------
+# IAM Instance Profile
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_instance_profile" "backend" {
+  name = "${var.project_name}-${var.environment}-backend-profile"
+  role = aws_iam_role.backend.name
+}
+
+# -----------------------------------------------------------------------------
+# IAM Policy: S3 Access
+# -----------------------------------------------------------------------------
+
 resource "aws_iam_role_policy" "backend_s3" {
-  name = "${local.name_prefix}-s3-policy"
-  role = aws_iam_role.backend_ec2.id
+  name = "${var.project_name}-${var.environment}-backend-s3"
+  role = aws_iam_role.backend.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -61,8 +52,8 @@ resource "aws_iam_role_policy" "backend_s3" {
       {
         Effect = "Allow"
         Action = [
-          "s3:PutObject",
           "s3:GetObject",
+          "s3:PutObject",
           "s3:DeleteObject",
           "s3:ListBucket"
         ]
@@ -75,10 +66,36 @@ resource "aws_iam_role_policy" "backend_s3" {
   })
 }
 
-# CloudWatch Logs
+# -----------------------------------------------------------------------------
+# IAM Policy: Polly Access
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_role_policy" "backend_polly" {
+  name = "${var.project_name}-${var.environment}-backend-polly"
+  role = aws_iam_role.backend.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "polly:SynthesizeSpeech",
+          "polly:DescribeVoices"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# -----------------------------------------------------------------------------
+# IAM Policy: CloudWatch Logs
+# -----------------------------------------------------------------------------
+
 resource "aws_iam_role_policy" "backend_cloudwatch" {
-  name = "${local.name_prefix}-cloudwatch-policy"
-  role = aws_iam_role.backend_ec2.id
+  name = "${var.project_name}-${var.environment}-backend-cloudwatch"
+  role = aws_iam_role.backend.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -88,8 +105,7 @@ resource "aws_iam_role_policy" "backend_cloudwatch" {
         Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "logs:DescribeLogStreams"
+          "logs:PutLogEvents"
         ]
         Resource = "arn:aws:logs:*:*:*"
       }
@@ -97,18 +113,12 @@ resource "aws_iam_role_policy" "backend_cloudwatch" {
   })
 }
 
-# SSM for parameter store access
-resource "aws_iam_role_policy_attachment" "backend_ssm" {
-  role       = aws_iam_role.backend_ec2.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Lambda Execution Role
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 resource "aws_iam_role" "lambda_execution" {
-  name = "${local.name_prefix}-lambda-role"
+  name = "${var.project_name}-${var.environment}-lambda-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -122,23 +132,27 @@ resource "aws_iam_role" "lambda_execution" {
       }
     ]
   })
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-lambda-execution"
+  })
 }
 
-# Lambda basic execution
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
+# Lambda basic execution policy
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   role       = aws_iam_role.lambda_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Lambda VPC access
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
+# Lambda VPC access policy
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   role       = aws_iam_role.lambda_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-# Lambda Lex integration
-resource "aws_iam_role_policy" "lambda_lex" {
-  name = "${local.name_prefix}-lambda-lex-policy"
+# Lambda policy to invoke backend
+resource "aws_iam_role_policy" "lambda_backend_access" {
+  name = "${var.project_name}-${var.environment}-lambda-backend"
   role = aws_iam_role.lambda_execution.id
 
   policy = jsonencode({
@@ -147,11 +161,7 @@ resource "aws_iam_role_policy" "lambda_lex" {
       {
         Effect = "Allow"
         Action = [
-          "lex:RecognizeText",
-          "lex:RecognizeUtterance",
-          "lex:DeleteSession",
-          "lex:GetSession",
-          "lex:PutSession"
+          "elasticloadbalancing:Describe*"
         ]
         Resource = "*"
       }
@@ -159,61 +169,14 @@ resource "aws_iam_role_policy" "lambda_lex" {
   })
 }
 
-# -----------------------------------------------------------------------------
-# Lex Bot Role
-# -----------------------------------------------------------------------------
-
-resource "aws_iam_role" "lex_bot" {
-  count = var.create_lex_bot ? 1 : 0
-  name  = "${local.name_prefix}-lex-bot-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lexv2.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "lex_bot" {
-  count = var.create_lex_bot ? 1 : 0
-  name  = "${local.name_prefix}-lex-bot-policy"
-  role  = aws_iam_role.lex_bot[0].id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "polly:SynthesizeSpeech"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "lambda:InvokeFunction"
-        ]
-        Resource = aws_lambda_function.lex_fulfillment.arn
-      }
-    ]
-  })
-}
-
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Cognito Unauthenticated Role
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 resource "aws_iam_role" "cognito_unauth" {
   count = var.create_cognito ? 1 : 0
-  name  = "${local.name_prefix}-cognito-unauth-role"
+
+  name = "${var.project_name}-${var.environment}-cognito-unauth"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -235,12 +198,18 @@ resource "aws_iam_role" "cognito_unauth" {
       }
     ]
   })
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-cognito-unauth"
+  })
 }
 
+# Cognito unauthenticated role policy for Lex access
 resource "aws_iam_role_policy" "cognito_unauth_lex" {
   count = var.create_cognito ? 1 : 0
-  name  = "${local.name_prefix}-cognito-lex-policy"
-  role  = aws_iam_role.cognito_unauth[0].id
+
+  name = "${var.project_name}-${var.environment}-cognito-lex"
+  role = aws_iam_role.cognito_unauth[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -251,12 +220,10 @@ resource "aws_iam_role_policy" "cognito_unauth_lex" {
           "lex:RecognizeText",
           "lex:RecognizeUtterance",
           "lex:DeleteSession",
-          "lex:GetSession",
-          "lex:PutSession"
+          "lex:PutSession",
+          "lex:GetSession"
         ]
-        Resource = var.create_lex_bot ? [
-          "arn:aws:lex:${local.region}:${local.account_id}:bot-alias/${aws_lexv2models_bot.tutor[0].id}/*"
-        ] : ["*"]
+        Resource = var.create_lex_bot ? "arn:aws:lex:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:bot-alias/${aws_lexv2models_bot.tutor[0].id}/*" : "*"
       }
     ]
   })

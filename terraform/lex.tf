@@ -1,12 +1,8 @@
 # =============================================================================
 # Amazon Lex V2 Bot Configuration
 # =============================================================================
-# Creates a conversational bot for the AI Personal Tutor with:
-# - WelcomeIntent: Greets users
-# - CreateLessonPlan: Collects URL and creates lessons
-# - StartLesson: Begins a specific lesson
-# - HelpIntent: Provides assistance
-# - FallbackIntent: Handles unrecognized input
+# Creates a conversational bot for the AI Personal Tutor
+# Handles: Welcome, URL collection, lesson navigation, help
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -16,18 +12,18 @@
 resource "aws_lexv2models_bot" "tutor" {
   count = var.create_lex_bot ? 1 : 0
 
-  name                        = var.lex_bot_name
-  description                 = "AI Personal Tutor - Learn from any URL with podcast-style lessons"
-  role_arn                    = aws_iam_role.lex_bot[0].arn
+  name                        = "${var.project_name}-${var.environment}-tutor-bot"
+  description                 = "AI Personal Tutor - Conversational interface for learning"
+  role_arn                    = aws_iam_role.lex[0].arn
   idle_session_ttl_in_seconds = 300
 
   data_privacy {
     child_directed = false
   }
 
-  tags = {
-    Name = "${local.name_prefix}-lex-bot"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-tutor-bot"
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -39,8 +35,8 @@ resource "aws_lexv2models_bot_locale" "en_us" {
 
   bot_id                           = aws_lexv2models_bot.tutor[0].id
   bot_version                      = "DRAFT"
-  locale_id                        = var.lex_bot_locale
-  n_lu_intent_confidence_threshold = 0.40
+  locale_id                        = "en_US"
+  n_lu_intent_confidence_threshold = 0.70
 
   voice_settings {
     voice_id = "Joanna"
@@ -49,61 +45,7 @@ resource "aws_lexv2models_bot_locale" "en_us" {
 }
 
 # -----------------------------------------------------------------------------
-# Slot Types
-# -----------------------------------------------------------------------------
-
-resource "aws_lexv2models_slot_type" "lesson_number" {
-  count = var.create_lex_bot ? 1 : 0
-
-  bot_id      = aws_lexv2models_bot.tutor[0].id
-  bot_version = "DRAFT"
-  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  name        = "LessonNumber"
-  description = "Lesson number for selection"
-
-  value_selection_setting {
-    resolution_strategy = "TOP_RESOLUTION"
-  }
-
-  slot_type_values {
-    slot_type_value {
-      value = "1"
-    }
-    synonyms {
-      value = "first"
-    }
-    synonyms {
-      value = "one"
-    }
-  }
-
-  slot_type_values {
-    slot_type_value {
-      value = "2"
-    }
-    synonyms {
-      value = "second"
-    }
-    synonyms {
-      value = "two"
-    }
-  }
-
-  slot_type_values {
-    slot_type_value {
-      value = "3"
-    }
-    synonyms {
-      value = "third"
-    }
-    synonyms {
-      value = "three"
-    }
-  }
-}
-
-# -----------------------------------------------------------------------------
-# Welcome Intent
+# Intent: Welcome
 # -----------------------------------------------------------------------------
 
 resource "aws_lexv2models_intent" "welcome" {
@@ -113,7 +55,7 @@ resource "aws_lexv2models_intent" "welcome" {
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
   name        = "WelcomeIntent"
-  description = "Greets users and explains the service"
+  description = "Greets the user and explains the tutor"
 
   sample_utterance {
     utterance = "hello"
@@ -128,77 +70,79 @@ resource "aws_lexv2models_intent" "welcome" {
     utterance = "start"
   }
   sample_utterance {
-    utterance = "get started"
-  }
-  sample_utterance {
     utterance = "help me learn"
   }
+  sample_utterance {
+    utterance = "I want to learn"
+  }
+  sample_utterance {
+    utterance = "good morning"
+  }
+  sample_utterance {
+    utterance = "good afternoon"
+  }
 
-  closing_setting {
-    active = true
-    closing_response {
-      message_group {
-        message {
-          plain_text_message {
-            value = "Welcome to AI Tutor! I'm here to help you learn from any web content. Just share a URL with me, and I'll create personalized podcast-style lessons with two AI hosts - Alex and Sam - who will explain the concepts in an engaging way. Ready to start? Just paste a URL!"
-          }
-        }
-      }
-    }
+  fulfillment_code_hook {
+    enabled = true
   }
 }
 
 # -----------------------------------------------------------------------------
-# Create Lesson Plan Intent
+# Intent: Provide URL
 # -----------------------------------------------------------------------------
 
-resource "aws_lexv2models_intent" "create_lesson" {
+resource "aws_lexv2models_intent" "provide_url" {
   count = var.create_lex_bot ? 1 : 0
 
   bot_id      = aws_lexv2models_bot.tutor[0].id
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  name        = "CreateLessonPlan"
-  description = "Creates a lesson plan from a URL"
+  name        = "ProvideURLIntent"
+  description = "User provides a URL to learn from"
 
   sample_utterance {
-    utterance = "create lessons from {SourceURL}"
+    utterance = "use this url {SourceURL}"
   }
   sample_utterance {
-    utterance = "I want to learn from {SourceURL}"
+    utterance = "learn from {SourceURL}"
   }
   sample_utterance {
-    utterance = "teach me about {SourceURL}"
-  }
-  sample_utterance {
-    utterance = "make lessons from {SourceURL}"
+    utterance = "here is a link {SourceURL}"
   }
   sample_utterance {
     utterance = "{SourceURL}"
   }
   sample_utterance {
-    utterance = "here's a URL {SourceURL}"
+    utterance = "I want to learn from {SourceURL}"
   }
   sample_utterance {
-    utterance = "learn from this {SourceURL}"
+    utterance = "teach me from {SourceURL}"
+  }
+  sample_utterance {
+    utterance = "create lessons from {SourceURL}"
+  }
+  sample_utterance {
+    utterance = "use {SourceURL}"
   }
 
   fulfillment_code_hook {
     enabled = true
-    active  = true
   }
 }
 
-# Source URL Slot
+# -----------------------------------------------------------------------------
+# Slot: Source URL (for ProvideURL intent)
+# -----------------------------------------------------------------------------
+
 resource "aws_lexv2models_slot" "source_url" {
   count = var.create_lex_bot ? 1 : 0
 
   bot_id      = aws_lexv2models_bot.tutor[0].id
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  intent_id   = aws_lexv2models_intent.create_lesson[0].intent_id
+  intent_id   = aws_lexv2models_intent.provide_url[0].intent_id
   name        = "SourceURL"
-  description = "URL to create lessons from"
+  description = "The URL of the content to learn from"
 
   slot_type_id = "AMAZON.URL"
 
@@ -206,22 +150,14 @@ resource "aws_lexv2models_slot" "source_url" {
     slot_constraint = "Required"
 
     prompt_specification {
-      max_retries                = 2
+      max_retries                = 3
       allow_interrupt            = true
       message_selection_strategy = "Random"
 
       message_group {
         message {
           plain_text_message {
-            value = "What URL would you like to learn from? Please paste the full web address."
-          }
-        }
-      }
-
-      message_group {
-        message {
-          plain_text_message {
-            value = "I need a URL to create your lessons. What article, documentation, or webpage should I teach you about?"
+            value = "Please provide the URL of the article or documentation you'd like to learn from."
           }
         }
       }
@@ -230,7 +166,7 @@ resource "aws_lexv2models_slot" "source_url" {
 }
 
 # -----------------------------------------------------------------------------
-# Start Lesson Intent
+# Intent: Start Lesson
 # -----------------------------------------------------------------------------
 
 resource "aws_lexv2models_intent" "start_lesson" {
@@ -239,61 +175,57 @@ resource "aws_lexv2models_intent" "start_lesson" {
   bot_id      = aws_lexv2models_bot.tutor[0].id
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  name        = "StartLesson"
-  description = "Starts a specific lesson"
+  name        = "StartLessonIntent"
+  description = "Start a specific lesson"
 
   sample_utterance {
-    utterance = "start lesson {LessonNumber}"
+    utterance = "start lesson {LessonNum}"
   }
   sample_utterance {
-    utterance = "play lesson {LessonNumber}"
+    utterance = "play lesson {LessonNum}"
   }
   sample_utterance {
-    utterance = "begin lesson {LessonNumber}"
+    utterance = "begin lesson {LessonNum}"
   }
   sample_utterance {
-    utterance = "I want to hear lesson {LessonNumber}"
+    utterance = "lesson {LessonNum}"
   }
   sample_utterance {
-    utterance = "let's do lesson {LessonNumber}"
-  }
-  sample_utterance {
-    utterance = "yes start"
-  }
-  sample_utterance {
-    utterance = "yes"
+    utterance = "go to lesson {LessonNum}"
   }
   sample_utterance {
     utterance = "start"
   }
+  sample_utterance {
+    utterance = "begin"
+  }
+  sample_utterance {
+    utterance = "play"
+  }
 
   fulfillment_code_hook {
     enabled = true
-    active  = true
   }
 }
 
-# Lesson Number Slot
-resource "aws_lexv2models_slot" "lesson_number" {
+# -----------------------------------------------------------------------------
+# Slot: Lesson Number (for StartLesson intent)
+# -----------------------------------------------------------------------------
+
+resource "aws_lexv2models_slot" "lesson_num" {
   count = var.create_lex_bot ? 1 : 0
 
   bot_id      = aws_lexv2models_bot.tutor[0].id
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
   intent_id   = aws_lexv2models_intent.start_lesson[0].intent_id
-  name        = "LessonNumber"
-  description = "Which lesson to start"
+  name        = "LessonNum"
+  description = "The lesson number to start"
 
-  slot_type_id = aws_lexv2models_slot_type.lesson_number[0].slot_type_id
+  slot_type_id = "AMAZON.Number"
 
   value_elicitation_setting {
-    slot_constraint = "Required"
-
-    default_value_specification {
-      default_value_list {
-        default_value = "1"
-      }
-    }
+    slot_constraint = "Optional"
 
     prompt_specification {
       max_retries                = 2
@@ -303,16 +235,127 @@ resource "aws_lexv2models_slot" "lesson_number" {
       message_group {
         message {
           plain_text_message {
-            value = "Which lesson would you like to start? Say 1, 2, or 3."
+            value = "Which lesson would you like to start? Say a number from 1 to 5."
           }
         }
+      }
+    }
+
+    default_value_specification {
+      default_value_list {
+        default_value = "1"
       }
     }
   }
 }
 
 # -----------------------------------------------------------------------------
-# Help Intent
+# Intent: Next Lesson
+# -----------------------------------------------------------------------------
+
+resource "aws_lexv2models_intent" "next_lesson" {
+  count = var.create_lex_bot ? 1 : 0
+
+  bot_id      = aws_lexv2models_bot.tutor[0].id
+  bot_version = "DRAFT"
+  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
+  name        = "NextLessonIntent"
+  description = "Continue to the next lesson"
+
+  sample_utterance {
+    utterance = "next"
+  }
+  sample_utterance {
+    utterance = "next lesson"
+  }
+  sample_utterance {
+    utterance = "continue"
+  }
+  sample_utterance {
+    utterance = "keep going"
+  }
+  sample_utterance {
+    utterance = "what's next"
+  }
+  sample_utterance {
+    utterance = "move on"
+  }
+
+  fulfillment_code_hook {
+    enabled = true
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Intent: Repeat Lesson
+# -----------------------------------------------------------------------------
+
+resource "aws_lexv2models_intent" "repeat_lesson" {
+  count = var.create_lex_bot ? 1 : 0
+
+  bot_id      = aws_lexv2models_bot.tutor[0].id
+  bot_version = "DRAFT"
+  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
+  name        = "RepeatLessonIntent"
+  description = "Repeat the current lesson"
+
+  sample_utterance {
+    utterance = "repeat"
+  }
+  sample_utterance {
+    utterance = "play again"
+  }
+  sample_utterance {
+    utterance = "repeat lesson"
+  }
+  sample_utterance {
+    utterance = "say that again"
+  }
+  sample_utterance {
+    utterance = "one more time"
+  }
+
+  fulfillment_code_hook {
+    enabled = true
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Intent: Get Progress
+# -----------------------------------------------------------------------------
+
+resource "aws_lexv2models_intent" "get_progress" {
+  count = var.create_lex_bot ? 1 : 0
+
+  bot_id      = aws_lexv2models_bot.tutor[0].id
+  bot_version = "DRAFT"
+  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
+  name        = "GetProgressIntent"
+  description = "Check learning progress"
+
+  sample_utterance {
+    utterance = "how am I doing"
+  }
+  sample_utterance {
+    utterance = "show progress"
+  }
+  sample_utterance {
+    utterance = "my progress"
+  }
+  sample_utterance {
+    utterance = "what have I learned"
+  }
+  sample_utterance {
+    utterance = "status"
+  }
+
+  fulfillment_code_hook {
+    enabled = true
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Intent: Help
 # -----------------------------------------------------------------------------
 
 resource "aws_lexv2models_intent" "help" {
@@ -322,13 +365,10 @@ resource "aws_lexv2models_intent" "help" {
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
   name        = "HelpIntent"
-  description = "Provides help and instructions"
+  description = "Provide help and instructions"
 
   sample_utterance {
     utterance = "help"
-  }
-  sample_utterance {
-    utterance = "help me"
   }
   sample_utterance {
     utterance = "what can you do"
@@ -339,51 +379,40 @@ resource "aws_lexv2models_intent" "help" {
   sample_utterance {
     utterance = "instructions"
   }
+  sample_utterance {
+    utterance = "I'm confused"
+  }
+  sample_utterance {
+    utterance = "what should I do"
+  }
 
-  closing_setting {
-    active = true
-    closing_response {
-      message_group {
-        message {
-          plain_text_message {
-            value = "Here's how I can help:\n\n1️⃣ Share a URL - Paste any webpage link and I'll create lessons from it\n2️⃣ Start a lesson - Say 'start lesson 1' to begin learning\n3️⃣ Ask questions - I'm here to help you understand the content\n\nThe lessons are presented as conversations between Alex (the expert) and Sam (the curious learner). Ready to try? Just paste a URL!"
-          }
-        }
-      }
-    }
+  fulfillment_code_hook {
+    enabled = true
   }
 }
 
 # -----------------------------------------------------------------------------
-# Fallback Intent
+# Intent: Fallback
 # -----------------------------------------------------------------------------
 
 resource "aws_lexv2models_intent" "fallback" {
   count = var.create_lex_bot ? 1 : 0
 
-  bot_id                  = aws_lexv2models_bot.tutor[0].id
-  bot_version             = "DRAFT"
-  locale_id               = aws_lexv2models_bot_locale.en_us[0].locale_id
-  name                    = "FallbackIntent"
-  description             = "Handles unrecognized input"
+  bot_id      = aws_lexv2models_bot.tutor[0].id
+  bot_version = "DRAFT"
+  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
+  name        = "FallbackIntent"
+  description = "Fallback when no intent matches"
+
   parent_intent_signature = "AMAZON.FallbackIntent"
 
-  closing_setting {
-    active = true
-    closing_response {
-      message_group {
-        message {
-          plain_text_message {
-            value = "I didn't quite catch that. You can share a URL to create lessons, say 'start lesson 1' to begin learning, or say 'help' for more options."
-          }
-        }
-      }
-    }
+  fulfillment_code_hook {
+    enabled = true
   }
 }
 
 # -----------------------------------------------------------------------------
-# Bot Version and Alias
+# Bot Version
 # -----------------------------------------------------------------------------
 
 resource "aws_lexv2models_bot_version" "main" {
@@ -392,45 +421,87 @@ resource "aws_lexv2models_bot_version" "main" {
   bot_id = aws_lexv2models_bot.tutor[0].id
 
   locale_specification = {
-    (var.lex_bot_locale) = {
+    "en_US" = {
       source_bot_version = "DRAFT"
     }
   }
 
   depends_on = [
     aws_lexv2models_intent.welcome,
-    aws_lexv2models_intent.create_lesson,
+    aws_lexv2models_intent.provide_url,
     aws_lexv2models_intent.start_lesson,
+    aws_lexv2models_intent.next_lesson,
+    aws_lexv2models_intent.repeat_lesson,
+    aws_lexv2models_intent.get_progress,
     aws_lexv2models_intent.help,
     aws_lexv2models_intent.fallback,
     aws_lexv2models_slot.source_url,
-    aws_lexv2models_slot.lesson_number
+    aws_lexv2models_slot.lesson_num
   ]
 }
 
-resource "aws_lexv2models_bot_alias" "main" {
+# -----------------------------------------------------------------------------
+# IAM Role for Lex Bot
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_role" "lex" {
   count = var.create_lex_bot ? 1 : 0
 
-  bot_id         = aws_lexv2models_bot.tutor[0].id
-  bot_version    = aws_lexv2models_bot_version.main[0].bot_version
-  bot_alias_name = "production"
+  name = "${var.project_name}-${var.environment}-lex-role"
 
-  bot_alias_locale_settings {
-    locale_id = var.lex_bot_locale
-
-    bot_alias_locale_setting {
-      enabled = true
-
-      code_hook_specification {
-        lambda_code_hook {
-          lambda_arn                  = aws_lambda_function.lex_fulfillment.arn
-          code_hook_interface_version = "1.0"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lexv2.amazonaws.com"
         }
       }
-    }
-  }
+    ]
+  })
 
-  tags = {
-    Name = "${local.name_prefix}-lex-alias"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-lex-role"
+  })
 }
+
+resource "aws_iam_role_policy" "lex_runtime" {
+  count = var.create_lex_bot ? 1 : 0
+
+  name = "${var.project_name}-${var.environment}-lex-runtime"
+  role = aws_iam_role.lex[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "polly:SynthesizeSpeech",
+          "comprehend:DetectSentiment"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# -----------------------------------------------------------------------------
+# Note: Lambda Permission for Lex is defined in lambda.tf
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Note: Bot Alias
+# -----------------------------------------------------------------------------
+# The aws_lexv2models_bot_alias resource is not yet available in the AWS provider.
+# Bot aliases must be created manually in the AWS Console or via AWS CLI:
+#
+# aws lexv2-models create-bot-alias \
+#   --bot-alias-name "prod" \
+#   --bot-id "<bot-id>" \
+#   --bot-version "<version-number>" \
+#   --bot-alias-locale-settings '{"en_US":{"enabled":true,"codeHookSpecification":{"lambdaCodeHook":{"lambdaARN":"<lambda-arn>","codeHookInterfaceVersion":"1.0"}}}}'
+#
+# After creating the alias, update the frontend environment with the alias ID.
