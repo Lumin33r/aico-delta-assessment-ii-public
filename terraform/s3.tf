@@ -3,7 +3,8 @@
 # =============================================================================
 
 resource "aws_s3_bucket" "audio" {
-  bucket = "${var.audio_bucket_name}-${random_id.suffix.hex}"
+  # Ensure bucket name doesn't start with hyphen and is lowercase
+  bucket = lower("${var.project_name}-audio-${var.environment}-${random_id.suffix.hex}")
 
   tags = {
     Name = "${local.name_prefix}-audio"

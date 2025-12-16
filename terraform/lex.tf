@@ -66,9 +66,7 @@ resource "aws_lexv2models_intent" "welcome" {
   sample_utterance {
     utterance = "hey"
   }
-  sample_utterance {
-    utterance = "start"
-  }
+  # Note: "start" utterance moved to StartLessonIntent to avoid conflict
   sample_utterance {
     utterance = "help me learn"
   }
@@ -100,29 +98,30 @@ resource "aws_lexv2models_intent" "provide_url" {
   name        = "ProvideURLIntent"
   description = "User provides a URL to learn from"
 
+  # Note: Utterances without slot references until SourceURL slot is created manually
   sample_utterance {
-    utterance = "use this url {SourceURL}"
+    utterance = "use this url"
   }
   sample_utterance {
-    utterance = "learn from {SourceURL}"
+    utterance = "learn from this"
   }
   sample_utterance {
-    utterance = "here is a link {SourceURL}"
+    utterance = "here is a link"
   }
   sample_utterance {
-    utterance = "{SourceURL}"
+    utterance = "I want to learn from this"
   }
   sample_utterance {
-    utterance = "I want to learn from {SourceURL}"
+    utterance = "teach me from this"
   }
   sample_utterance {
-    utterance = "teach me from {SourceURL}"
+    utterance = "create lessons from this"
   }
   sample_utterance {
-    utterance = "create lessons from {SourceURL}"
+    utterance = "use this"
   }
   sample_utterance {
-    utterance = "use {SourceURL}"
+    utterance = "provide url"
   }
 
   fulfillment_code_hook {
@@ -131,39 +130,15 @@ resource "aws_lexv2models_intent" "provide_url" {
 }
 
 # -----------------------------------------------------------------------------
-# Slot: Source URL (for ProvideURL intent)
+# DISABLED: aws_lexv2models_slot.source_url
+# Due to AWS Terraform provider bug with prompt_attempts_specification
+# Create this slot manually in AWS Console after deployment:
+#   - Bot: AI Personal Tutor
+#   - Intent: ProvideURLIntent
+#   - Slot Name: SourceURL
+#   - Slot Type: AMAZON.URL
+#   - Constraint: Required
 # -----------------------------------------------------------------------------
-
-resource "aws_lexv2models_slot" "source_url" {
-  count = var.create_lex_bot ? 1 : 0
-
-  bot_id      = aws_lexv2models_bot.tutor[0].id
-  bot_version = "DRAFT"
-  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  intent_id   = aws_lexv2models_intent.provide_url[0].intent_id
-  name        = "SourceURL"
-  description = "The URL of the content to learn from"
-
-  slot_type_id = "AMAZON.URL"
-
-  value_elicitation_setting {
-    slot_constraint = "Required"
-
-    prompt_specification {
-      max_retries                = 3
-      allow_interrupt            = true
-      message_selection_strategy = "Random"
-
-      message_group {
-        message {
-          plain_text_message {
-            value = "Please provide the URL of the article or documentation you'd like to learn from."
-          }
-        }
-      }
-    }
-  }
-}
 
 # -----------------------------------------------------------------------------
 # Intent: Start Lesson
@@ -178,20 +153,18 @@ resource "aws_lexv2models_intent" "start_lesson" {
   name        = "StartLessonIntent"
   description = "Start a specific lesson"
 
+  # Note: Utterances without slot references until LessonNum slot is created manually
   sample_utterance {
-    utterance = "start lesson {LessonNum}"
+    utterance = "start lesson"
   }
   sample_utterance {
-    utterance = "play lesson {LessonNum}"
+    utterance = "play lesson"
   }
   sample_utterance {
-    utterance = "begin lesson {LessonNum}"
+    utterance = "begin lesson"
   }
   sample_utterance {
-    utterance = "lesson {LessonNum}"
-  }
-  sample_utterance {
-    utterance = "go to lesson {LessonNum}"
+    utterance = "go to lesson"
   }
   sample_utterance {
     utterance = "start"
@@ -210,44 +183,20 @@ resource "aws_lexv2models_intent" "start_lesson" {
 
 # -----------------------------------------------------------------------------
 # Slot: Lesson Number (for StartLesson intent)
+# NOTE: Disabled due to AWS Terraform provider bug with prompt_attempts_specification
+# Create this slot manually in AWS Console after deployment
 # -----------------------------------------------------------------------------
 
-resource "aws_lexv2models_slot" "lesson_num" {
-  count = var.create_lex_bot ? 1 : 0
-
-  bot_id      = aws_lexv2models_bot.tutor[0].id
-  bot_version = "DRAFT"
-  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  intent_id   = aws_lexv2models_intent.start_lesson[0].intent_id
-  name        = "LessonNum"
-  description = "The lesson number to start"
-
-  slot_type_id = "AMAZON.Number"
-
-  value_elicitation_setting {
-    slot_constraint = "Optional"
-
-    prompt_specification {
-      max_retries                = 2
-      allow_interrupt            = true
-      message_selection_strategy = "Random"
-
-      message_group {
-        message {
-          plain_text_message {
-            value = "Which lesson would you like to start? Say a number from 1 to 5."
-          }
-        }
-      }
-    }
-
-    default_value_specification {
-      default_value_list {
-        default_value = "1"
-      }
-    }
-  }
-}
+# DISABLED: aws_lexv2models_slot.lesson_num
+# Due to AWS Terraform provider bug with prompt_attempts_specification
+# Create this slot manually in AWS Console after deployment:
+#   - Bot: AI Personal Tutor
+#   - Intent: StartLessonIntent
+#   - Slot Name: LessonNum
+#   - Slot Type: AMAZON.Number
+#   - Constraint: Optional
+#   - Default Value: 1
+# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # Intent: Next Lesson
@@ -355,16 +304,16 @@ resource "aws_lexv2models_intent" "get_progress" {
 }
 
 # -----------------------------------------------------------------------------
-# Intent: Help
+# Intent: Get Help (renamed to avoid conflict with built-in HelpIntent)
 # -----------------------------------------------------------------------------
 
-resource "aws_lexv2models_intent" "help" {
+resource "aws_lexv2models_intent" "get_help" {
   count = var.create_lex_bot ? 1 : 0
 
   bot_id      = aws_lexv2models_bot.tutor[0].id
   bot_version = "DRAFT"
   locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  name        = "HelpIntent"
+  name        = "GetHelpIntent"
   description = "Provide help and instructions"
 
   sample_utterance {
@@ -392,24 +341,12 @@ resource "aws_lexv2models_intent" "help" {
 }
 
 # -----------------------------------------------------------------------------
-# Intent: Fallback
+# Note: FallbackIntent
 # -----------------------------------------------------------------------------
-
-resource "aws_lexv2models_intent" "fallback" {
-  count = var.create_lex_bot ? 1 : 0
-
-  bot_id      = aws_lexv2models_bot.tutor[0].id
-  bot_version = "DRAFT"
-  locale_id   = aws_lexv2models_bot_locale.en_us[0].locale_id
-  name        = "FallbackIntent"
-  description = "Fallback when no intent matches"
-
-  parent_intent_signature = "AMAZON.FallbackIntent"
-
-  fulfillment_code_hook {
-    enabled = true
-  }
-}
+# FallbackIntent is automatically created by Lex when creating a bot locale.
+# We don't need to create it manually - attempting to do so causes:
+# "Intent with name FallbackIntent already exists"
+# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # Bot Version
@@ -433,10 +370,10 @@ resource "aws_lexv2models_bot_version" "main" {
     aws_lexv2models_intent.next_lesson,
     aws_lexv2models_intent.repeat_lesson,
     aws_lexv2models_intent.get_progress,
-    aws_lexv2models_intent.help,
-    aws_lexv2models_intent.fallback,
-    aws_lexv2models_slot.source_url,
-    aws_lexv2models_slot.lesson_num
+    aws_lexv2models_intent.get_help
+    # NOTE: Slots disabled due to AWS provider bug
+    # aws_lexv2models_slot.source_url,
+    # aws_lexv2models_slot.lesson_num
   ]
 }
 

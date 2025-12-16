@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 class SynthesisConfig:
     """Configuration for audio synthesis."""
     # AWS settings
-    region: str = "us-east-1"
+    region: str = "us-west-2"
     bucket: str = "ai-tutor-audio"
 
     # Audio settings

@@ -84,7 +84,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Set environment variables from Terraform outputs
-export AWS_REGION=us-east-1
+export AWS_REGION=us-west-2
 export S3_BUCKET=$(terraform -chdir=../terraform output -raw s3_bucket_name)
 export OLLAMA_HOST=http://localhost:11434
 export OLLAMA_MODEL=llama3.2

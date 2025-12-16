@@ -47,7 +47,7 @@ CORS(app, origins=os.getenv('CORS_ORIGINS', '*').split(','))
 # Configuration
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.2')
-AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+AWS_REGION = os.getenv('AWS_REGION', 'us-west-2')
 S3_BUCKET = os.getenv('S3_BUCKET', 'ai-tutor-audio')
 LESSONS_PER_URL = int(os.getenv('LESSONS_PER_URL', '3'))
 

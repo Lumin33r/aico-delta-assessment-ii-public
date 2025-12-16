@@ -66,7 +66,7 @@ class AudioSynthesizer:
 
     def __init__(
         self,
-        region: str = 'us-east-1',
+        region: str = 'us-west-2',
         bucket: str = 'ai-tutor-audio',
         local_storage: str = '/tmp/audio'
     ):

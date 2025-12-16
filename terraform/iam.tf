@@ -31,11 +31,13 @@ resource "aws_iam_role" "backend" {
 
 # -----------------------------------------------------------------------------
 # IAM Instance Profile
+# Note: Uses aws.no_tags provider to avoid iam:TagInstanceProfile permission issues
 # -----------------------------------------------------------------------------
 
 resource "aws_iam_instance_profile" "backend" {
-  name = "${var.project_name}-${var.environment}-backend-profile"
-  role = aws_iam_role.backend.name
+  provider = aws.no_tags
+  name     = "${var.project_name}-${var.environment}-backend-profile"
+  role     = aws_iam_role.backend.name
 }
 
 # -----------------------------------------------------------------------------
@@ -111,6 +113,15 @@ resource "aws_iam_role_policy" "backend_cloudwatch" {
       }
     ]
   })
+}
+
+# -----------------------------------------------------------------------------
+# IAM Policy: SSM Session Manager Access
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_role_policy_attachment" "backend_ssm" {
+  role       = aws_iam_role.backend.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 # =============================================================================

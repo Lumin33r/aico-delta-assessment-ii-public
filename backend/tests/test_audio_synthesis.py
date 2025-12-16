@@ -272,7 +272,7 @@ class TestSynthesisConfig:
     def test_default_config(self):
         config = SynthesisConfig()
 
-        assert config.region == 'us-east-1'
+        assert config.region == 'us-west-2'
         assert config.output_format == 'mp3'
         assert config.max_concurrent_requests == 3
 

@@ -12,7 +12,7 @@ import { v4 as uuidv4 } from 'uuid'
 
 // Runtime config (injected at build or runtime)
 const config = window.__RUNTIME_CONFIG__ || {
-  AWS_REGION: import.meta.env.VITE_AWS_REGION || 'us-east-1',
+  AWS_REGION: import.meta.env.VITE_AWS_REGION || 'us-west-2',
   COGNITO_IDENTITY_POOL_ID: import.meta.env.VITE_COGNITO_IDENTITY_POOL_ID || '',
   LEX_BOT_ID: import.meta.env.VITE_LEX_BOT_ID || '',
   LEX_BOT_ALIAS_ID: import.meta.env.VITE_LEX_BOT_ALIAS_ID || '',

@@ -25,7 +25,7 @@ class Config:
     OLLAMA_MODEL: str = os.getenv('OLLAMA_MODEL', 'llama3.2')
 
     # AWS settings
-    AWS_REGION: str = os.getenv('AWS_REGION', 'us-east-1')
+    AWS_REGION: str = os.getenv('AWS_REGION', 'us-west-2')
     S3_BUCKET: str = os.getenv('S3_BUCKET', 'ai-tutor-audio')
 
     # Lesson settings
