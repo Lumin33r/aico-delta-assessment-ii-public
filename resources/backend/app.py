@@ -7,11 +7,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Initialize AWS clients
-# TODO: Initialize boto3 clients for AI services
-# lex_client = boto3.client('lexv2-runtime', region_name='us-east-1')
-# polly_client = boto3.client('polly', region_name='us-east-1')
-# comprehend_client = boto3.client('comprehend', region_name='us-east-1')
-# rekognition_client = boto3.client('rekognition', region_name='us-east-1')
+
 
 @app.route('/', methods=['GET'])
 def index():
