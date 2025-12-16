@@ -210,7 +210,7 @@ class EnhancedAudioSynthesizer:
 
         # Check Polly
         try:
-            self.polly.describe_voices(LanguageCode='en-US', MaxResults=1)
+            self.polly.describe_voices(LanguageCode='en-US')
             result['polly'] = True
         except Exception as e:
             result['polly_error'] = str(e)

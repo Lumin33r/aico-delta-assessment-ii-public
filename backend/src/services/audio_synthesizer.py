@@ -102,7 +102,7 @@ class AudioSynthesizer:
             return False
 
         try:
-            self.polly.describe_voices(LanguageCode='en-US', MaxResults=1)
+            self.polly.describe_voices(LanguageCode='en-US')
             return True
         except Exception as e:
             logger.warning(f"Polly health check failed: {e}")

@@ -541,7 +541,7 @@ class TestAPIv2Routes:
 
         response = client.delete('/api/v2/sessions/test-123')
 
-        assert response.status_code == 200
+        assert response.status_code == 204  # DELETE returns 204 No Content on success
 
 
 # =============================================================================
