@@ -1,0 +1,168 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #6366f1;
+  --color-primary-dark: #4f46e5;
+  --color-secondary: #10b981;
+  --color-bg-dark: #0f172a;
+  --color-bg-darker: #020617;
+  --color-surface: #1e293b;
+  --color-surface-light: #334155;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(135deg, var(--color-bg-dark) 0%, var(--color-bg-darker) 100%);
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-darker);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-light);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Animation utilities */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-pulse-slow {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Chat message styles */
+.chat-message {
+  @apply animate-fade-in;
+}
+
+.chat-message.user {
+  @apply bg-indigo-600 text-white ml-auto;
+}
+
+.chat-message.bot {
+  @apply bg-slate-700 text-gray-100;
+}
+
+/* Audio player styles */
+.audio-player {
+  @apply bg-slate-800 rounded-xl p-4;
+}
+
+.audio-player-progress {
+  @apply h-2 bg-slate-600 rounded-full overflow-hidden;
+}
+
+.audio-player-progress-bar {
+  @apply h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-100;
+}
+
+/* Host badge styles */
+.host-badge {
+  @apply inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium;
+}
+
+.host-badge.alex {
+  @apply bg-blue-500/20 text-blue-400;
+}
+
+.host-badge.sam {
+  @apply bg-purple-500/20 text-purple-400;
+}
+
+/* Button styles */
+.btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900;
+}
+
+.btn-primary {
+  @apply bg-indigo-600 hover:bg-indigo-700 text-white focus:ring-indigo-500;
+}
+
+.btn-secondary {
+  @apply bg-slate-700 hover:bg-slate-600 text-gray-200 focus:ring-slate-500;
+}
+
+.btn-success {
+  @apply bg-emerald-600 hover:bg-emerald-700 text-white focus:ring-emerald-500;
+}
+
+/* Card styles */
+.card {
+  @apply bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl;
+}
+
+.card-hover {
+  @apply hover:bg-slate-800 hover:border-slate-600 transition-all duration-200 cursor-pointer;
+}
+
+/* Input styles */
+.input {
+  @apply w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200;
+}
+
+/* Lesson card styles */
+.lesson-card {
+  @apply card p-4 flex items-center gap-4 card-hover;
+}
+
+.lesson-number {
+  @apply w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-white;
+}
+
+/* Transcript styles */
+.transcript-segment {
+  @apply py-3 border-b border-slate-700/50 last:border-0;
+}
+
+.transcript-speaker {
+  @apply font-semibold mb-1;
+}
+
+.transcript-speaker.alex {
+  @apply text-blue-400;
+}
+
+.transcript-speaker.sam {
+  @apply text-purple-400;
+}

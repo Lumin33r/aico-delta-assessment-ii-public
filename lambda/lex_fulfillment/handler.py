@@ -1,0 +1,391 @@
+"""
+Lex Fulfillment Lambda Handler
+
+This Lambda function handles fulfillment requests from Amazon Lex V2.
+It connects the Lex bot to the AI Tutor backend API for:
+- Creating lesson plans from URLs
+- Starting lessons
+- Managing session state
+
+Lex V2 Event Structure:
+{
+    "sessionId": "...",
+    "inputTranscript": "...",
+    "interpretations": [...],
+    "sessionState": {
+        "intent": {
+            "name": "...",
+            "slots": {...},
+            "state": "..."
+        },
+        "sessionAttributes": {...}
+    }
+}
+"""
+
+import json
+import os
+import logging
+from urllib import request, error
+from urllib.parse import urljoin
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
+
+# Backend API URL from environment
+BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
+
+
+def lambda_handler(event, context):
+    """
+    Main Lambda handler for Lex V2 fulfillment.
+
+    Args:
+        event: Lex V2 event
+        context: Lambda context
+
+    Returns:
+        Lex V2 response
+    """
+    logger.info(f"Received event: {json.dumps(event)}")
+
+    # Extract intent information
+    intent_name = event['sessionState']['intent']['name']
+    slots = event['sessionState']['intent'].get('slots', {})
+    session_attributes = event['sessionState'].get('sessionAttributes', {}) or {}
+    session_id = event.get('sessionId', '')
+
+    logger.info(f"Intent: {intent_name}, Slots: {slots}")
+
+    # Route to appropriate handler
+    handlers = {
+        'CreateLessonPlan': handle_create_lesson_plan,
+        'StartLesson': handle_start_lesson,
+        'WelcomeIntent': handle_welcome,
+        'HelpIntent': handle_help,
+        'FallbackIntent': handle_fallback,
+    }
+
+    handler = handlers.get(intent_name, handle_fallback)
+
+    try:
+        response = handler(event, slots, session_attributes)
+        logger.info(f"Response: {json.dumps(response)}")
+        return response
+    except Exception as e:
+        logger.error(f"Handler error: {str(e)}", exc_info=True)
+        return build_response(
+            event,
+            session_attributes,
+            "I encountered an error processing your request. Please try again.",
+            close_intent=True
+        )
+
+
+def handle_create_lesson_plan(event, slots, session_attributes):
+    """
+    Handle CreateLessonPlan intent - creates lessons from a URL.
+    """
+    # Extract URL from slot
+    url_slot = slots.get('SourceURL', {})
+    url = url_slot.get('value', {}).get('interpretedValue') if url_slot else None
+
+    if not url:
+        # Elicit the URL slot
+        return build_elicit_slot_response(
+            event,
+            session_attributes,
+            'SourceURL',
+            "What URL would you like me to create lessons from? Please paste the full web address."
+        )
+
+    # Call backend API
+    logger.info(f"Creating lesson plan for URL: {url}")
+
+    try:
+        api_response = call_backend_api('/api/lex/create-lesson', {
+            'url': url,
+            'user_id': event.get('sessionId', 'anonymous')
+        })
+
+        if api_response.get('success'):
+            # Store session ID in attributes
+            session_attributes['tutor_session_id'] = api_response.get('session_id', '')
+            session_attributes['lessons'] = json.dumps(api_response.get('lessons', []))
+
+            message = api_response.get('message',
+                "I've created your lessons! Would you like to start with lesson 1?")
+
+            return build_response(
+                event,
+                session_attributes,
+                message,
+                close_intent=True
+            )
+        else:
+            return build_response(
+                event,
+                session_attributes,
+                api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
+                close_intent=True
+            )
+
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            f"I couldn't connect to the lesson service. Please try again in a moment.",
+            close_intent=True
+        )
+
+
+def handle_start_lesson(event, slots, session_attributes):
+    """
+    Handle StartLesson intent - starts a specific lesson.
+    """
+    # Get session ID from attributes
+    tutor_session_id = session_attributes.get('tutor_session_id', '')
+
+    if not tutor_session_id:
+        return build_response(
+            event,
+            session_attributes,
+            "I don't have any lessons ready yet. Would you like to create some? Just share a URL with me!",
+            close_intent=True
+        )
+
+    # Get lesson number from slot (default to 1)
+    lesson_slot = slots.get('LessonNumber', {})
+    lesson_num = 1
+
+    if lesson_slot and lesson_slot.get('value'):
+        try:
+            lesson_num = int(lesson_slot['value']['interpretedValue'])
+        except (ValueError, KeyError):
+            lesson_num = 1
+
+    logger.info(f"Starting lesson {lesson_num} for session {tutor_session_id}")
+
+    try:
+        api_response = call_backend_api('/api/lex/start-lesson', {
+            'session_id': tutor_session_id,
+            'lesson_number': lesson_num
+        })
+
+        if api_response.get('success'):
+            message = api_response.get('message', f"Starting lesson {lesson_num}...")
+
+            # If audio needs generation, let user know
+            if api_response.get('needs_generation'):
+                message = f"I'm preparing lesson {lesson_num}. Alex and Sam are getting ready to record. This will take about 30 seconds..."
+
+            return build_response(
+                event,
+                session_attributes,
+                message,
+                close_intent=True,
+                response_card=build_audio_card(api_response) if api_response.get('audio_url') else None
+            )
+        else:
+            return build_response(
+                event,
+                session_attributes,
+                api_response.get('message', "I couldn't start that lesson. Please try again."),
+                close_intent=True
+            )
+
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't start the lesson. Please try again.",
+            close_intent=True
+        )
+
+
+def handle_welcome(event, slots, session_attributes):
+    """
+    Handle WelcomeIntent - greet the user.
+    """
+    message = (
+        "Welcome to AI Tutor! 🎓 I'm here to help you learn from any web content. "
+        "Just share a URL with me, and I'll create personalized podcast-style lessons "
+        "with two AI hosts - Alex and Sam - who will explain the concepts in an engaging way.\n\n"
+        "Ready to start? Just paste a URL!"
+    )
+
+    return build_response(
+        event,
+        session_attributes,
+        message,
+        close_intent=True
+    )
+
+
+def handle_help(event, slots, session_attributes):
+    """
+    Handle HelpIntent - provide usage instructions.
+    """
+    message = (
+        "Here's how I can help:\n\n"
+        "1️⃣ **Share a URL** - Paste any webpage link and I'll create lessons from it\n"
+        "2️⃣ **Start a lesson** - Say 'start lesson 1' to begin learning\n"
+        "3️⃣ **Ask questions** - I'm here to help you understand the content\n\n"
+        "The lessons are presented as conversations between Alex (the expert) and Sam "
+        "(the curious learner). Ready to try? Just paste a URL!"
+    )
+
+    return build_response(
+        event,
+        session_attributes,
+        message,
+        close_intent=True
+    )
+
+
+def handle_fallback(event, slots, session_attributes):
+    """
+    Handle FallbackIntent - respond to unrecognized input.
+    """
+    message = (
+        "I didn't quite catch that. You can:\n"
+        "• Share a URL to create lessons\n"
+        "• Say 'start lesson 1' to begin learning\n"
+        "• Say 'help' for more options"
+    )
+
+    return build_response(
+        event,
+        session_attributes,
+        message,
+        close_intent=True
+    )
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def call_backend_api(endpoint: str, data: dict) -> dict:
+    """
+    Call the backend API.
+
+    Args:
+        endpoint: API endpoint path
+        data: Request body data
+
+    Returns:
+        API response as dict
+    """
+    url = urljoin(BACKEND_URL, endpoint)
+
+    req = request.Request(
+        url,
+        data=json.dumps(data).encode('utf-8'),
+        headers={
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        method='POST'
+    )
+
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except error.HTTPError as e:
+        body = e.read().decode('utf-8')
+        logger.error(f"HTTP Error {e.code}: {body}")
+        try:
+            return json.loads(body)
+        except:
+            return {'success': False, 'message': f'API error: {e.code}'}
+    except error.URLError as e:
+        logger.error(f"URL Error: {e.reason}")
+        return {'success': False, 'message': 'Could not connect to backend'}
+
+
+def build_response(event, session_attributes, message, close_intent=False, response_card=None):
+    """
+    Build a Lex V2 response.
+    """
+    intent = event['sessionState']['intent']
+
+    response = {
+        'sessionState': {
+            'sessionAttributes': session_attributes,
+            'dialogAction': {
+                'type': 'Close' if close_intent else 'Delegate'
+            },
+            'intent': {
+                'name': intent['name'],
+                'slots': intent.get('slots', {}),
+                'state': 'Fulfilled' if close_intent else 'InProgress'
+            }
+        },
+        'messages': [
+            {
+                'contentType': 'PlainText',
+                'content': message
+            }
+        ]
+    }
+
+    if response_card:
+        response['messages'].append(response_card)
+
+    return response
+
+
+def build_elicit_slot_response(event, session_attributes, slot_name, message):
+    """
+    Build a response that elicits a specific slot.
+    """
+    intent = event['sessionState']['intent']
+
+    return {
+        'sessionState': {
+            'sessionAttributes': session_attributes,
+            'dialogAction': {
+                'type': 'ElicitSlot',
+                'slotToElicit': slot_name
+            },
+            'intent': {
+                'name': intent['name'],
+                'slots': intent.get('slots', {}),
+                'state': 'InProgress'
+            }
+        },
+        'messages': [
+            {
+                'contentType': 'PlainText',
+                'content': message
+            }
+        ]
+    }
+
+
+def build_audio_card(api_response):
+    """
+    Build a response card with audio player link.
+    """
+    audio_url = api_response.get('audio_url', '')
+
+    if not audio_url:
+        return None
+
+    return {
+        'contentType': 'ImageResponseCard',
+        'imageResponseCard': {
+            'title': '🎧 Your Lesson is Ready!',
+            'subtitle': 'Click to listen to Alex and Sam',
+            'buttons': [
+                {
+                    'text': '▶️ Play Lesson',
+                    'value': 'play audio'
+                }
+            ]
+        }
+    }
