@@ -23,7 +23,7 @@ dnf update -y
 dnf install -y git docker
 
 # -----------------------------------------------------------------------------
-# Install Docker Compose v2
+# Install Docker Compose v2 and Update Buildx
 # -----------------------------------------------------------------------------
 echo "=== Installing Docker Compose ==="
 mkdir -p /usr/local/lib/docker/cli-plugins
@@ -31,8 +31,15 @@ curl -SL "https://github.com/docker/compose/releases/latest/download/docker-comp
     -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-# Verify installation
+# Update Docker Buildx to v0.19.3 (required for Compose to build images)
+echo "=== Updating Docker Buildx ==="
+curl -Lo /usr/libexec/docker/cli-plugins/docker-buildx \
+    https://github.com/docker/buildx/releases/download/v0.19.3/buildx-v0.19.3.linux-amd64
+chmod +x /usr/libexec/docker/cli-plugins/docker-buildx
+
+# Verify installations
 docker compose version
+docker buildx version
 
 # -----------------------------------------------------------------------------
 # Start and Enable Docker

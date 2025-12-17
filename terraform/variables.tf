@@ -190,7 +190,7 @@ variable "lambda_memory" {
 variable "git_repo_url" {
   description = "Git repository URL for cloning application code"
   type        = string
-  default     = "https://github.com/Lumin33r/aico-delta-assessment-ii.git"
+  default     = "https://github.com/Lumin33r/aico-delta-assessment-ii-public.git"
 }
 
 variable "lex_bot_alias_id" {
