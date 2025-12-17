@@ -196,5 +196,5 @@ variable "git_repo_url" {
 variable "lex_bot_alias_id" {
   description = "Lex Bot Alias ID (manually created)"
   type        = string
-  default     = "EU0RH7BDUK"
+  default     = "8GHUOBWQ16"
 }
