@@ -14,7 +14,7 @@ cd terraform
 
 # Update variables for your environment
 export TF_VAR_git_repo_url="https://github.com/your-org/ai-personal-tutor.git"
-export TF_VAR_lex_bot_alias_id="<your-alias-id>"
+export TF_VAR_lex_bot_alias_id="EU0RH7BDUK"
 
 terraform init && terraform apply -auto-approve
 
