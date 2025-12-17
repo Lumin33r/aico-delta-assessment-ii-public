@@ -4,8 +4,6 @@
 # Orchestrates all services: Frontend (Nginx), Backend (Flask), Ollama (LLM)
 # =============================================================================
 
-version: '3.8'
-
 services:
   # ---------------------------------------------------------------------------
   # Frontend Service (Nginx serving React app)
@@ -24,25 +22,10 @@ services:
     ports:
       - "80:80"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
       - ai-tutor-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
 
   # ---------------------------------------------------------------------------
   # Backend Service (Flask + Gunicorn)
@@ -61,25 +44,16 @@ services:
       - FLASK_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      ollama:
-        condition: service_healthy
+      - ollama
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 30s
     networks:
       - ai-tutor-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
 
   # ---------------------------------------------------------------------------
   # Ollama Service (LLM)
@@ -87,27 +61,21 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ai-tutor-ollama
+    ports:
+      - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      test: ["CMD-SHELL", "ollama list || exit 0"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 30s
+      retries: 3
+      start_period: 60s
     networks:
       - ai-tutor-network
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
 
   # ---------------------------------------------------------------------------
   # Model Initialization (one-time pull)
@@ -116,18 +84,19 @@ services:
     image: ollama/ollama:latest
     container_name: ai-tutor-model-init
     depends_on:
-      ollama:
-        condition: service_healthy
+      - ollama
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        sleep 10
         echo "Pulling model: ${OLLAMA_MODEL:-llama3.2:1b}"
-        ollama pull ${OLLAMA_MODEL:-llama3.2:1b}
+        OLLAMA_HOST=http://ollama:11434 ollama pull ${OLLAMA_MODEL:-llama3.2:1b}
         echo "Model pull complete"
     environment:
       - OLLAMA_HOST=http://ollama:11434
     networks:
       - ai-tutor-network
+    restart: "no"
     restart: "no"
 
 # -----------------------------------------------------------------------------
