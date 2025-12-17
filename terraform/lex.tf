@@ -36,7 +36,8 @@ resource "aws_lexv2models_bot_locale" "en_us" {
   bot_id                           = aws_lexv2models_bot.tutor[0].id
   bot_version                      = "DRAFT"
   locale_id                        = "en_US"
-  n_lu_intent_confidence_threshold = 0.70
+  # Lowered from 0.70 to 0.40 to allow ProvideURLIntent to match with partial confidence
+  n_lu_intent_confidence_threshold = 0.40
 
   voice_settings {
     voice_id = "Joanna"
@@ -98,7 +99,7 @@ resource "aws_lexv2models_intent" "provide_url" {
   name        = "ProvideURLIntent"
   description = "User provides a URL to learn from"
 
-  # Note: Utterances without slot references until SourceURL slot is created manually
+  # Expanded utterances to better match URL patterns
   sample_utterance {
     utterance = "use this url"
   }
@@ -122,6 +123,54 @@ resource "aws_lexv2models_intent" "provide_url" {
   }
   sample_utterance {
     utterance = "provide url"
+  }
+  sample_utterance {
+    utterance = "https"
+  }
+  sample_utterance {
+    utterance = "http"
+  }
+  sample_utterance {
+    utterance = "www"
+  }
+  sample_utterance {
+    utterance = "here is the url"
+  }
+  sample_utterance {
+    utterance = "this is the url"
+  }
+  sample_utterance {
+    utterance = "check this url"
+  }
+  sample_utterance {
+    utterance = "read this"
+  }
+  sample_utterance {
+    utterance = "learn this"
+  }
+  sample_utterance {
+    utterance = ".com"
+  }
+  sample_utterance {
+    utterance = ".org"
+  }
+  sample_utterance {
+    utterance = ".io"
+  }
+  sample_utterance {
+    utterance = "documentation"
+  }
+  sample_utterance {
+    utterance = "docs"
+  }
+  sample_utterance {
+    utterance = "readme"
+  }
+  sample_utterance {
+    utterance = "github"
+  }
+  sample_utterance {
+    utterance = "link"
   }
 
   fulfillment_code_hook {
@@ -442,3 +491,44 @@ resource "aws_iam_role_policy" "lex_runtime" {
 #   --bot-alias-locale-settings '{"en_US":{"enabled":true,"codeHookSpecification":{"lambdaCodeHook":{"lambdaARN":"<lambda-arn>","codeHookInterfaceVersion":"1.0"}}}}'
 #
 # After creating the alias, update the frontend environment with the alias ID.
+#
+# -----------------------------------------------------------------------------
+# MANUAL BOT ALIAS CONFIGURATION (as of 2025-12-16)
+# -----------------------------------------------------------------------------
+# Bot ID: USG52JP3I9
+# Bot Alias ID: 8GHUOBWQ16 (prod)
+# Bot Version: 6
+#
+# The following was configured manually via AWS CLI:
+# 1. Built bot locale: en_US with confidence threshold 0.40
+# 2. Created bot version 6 from DRAFT
+# 3. Updated bot alias with:
+#    - en_US locale enabled
+#    - Lambda code hook: Troy-ai-tutor-dev-lex-fulfillment
+#    - Code hook interface version: 1.0
+#
+# To update the alias after terraform changes:
+#   aws lexv2-models build-bot-locale --bot-id USG52JP3I9 --bot-version DRAFT --locale-id en_US --region us-west-2
+#   aws lexv2-models create-bot-version --bot-id USG52JP3I9 --bot-version-locale-specification '{"en_US": {"sourceBotVersion": "DRAFT"}}' --region us-west-2
+#   aws lexv2-models update-bot-alias --bot-id USG52JP3I9 --bot-alias-id 8GHUOBWQ16 --bot-alias-name prod --bot-version <NEW_VERSION> \
+#     --bot-alias-locale-settings '{"en_US": {"enabled": true, "codeHookSpecification": {"lambdaCodeHook": {"lambdaARN": "arn:aws:lambda:us-west-2:388691194728:function:Troy-ai-tutor-dev-lex-fulfillment", "codeHookInterfaceVersion": "1.0"}}}}' --region us-west-2
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# KNOWN ISSUE: FallbackIntent Priority
+# -----------------------------------------------------------------------------
+# Lex V2 FallbackIntent has priority over other intents regardless of confidence
+# scores. Even when ProvideURLIntent has 0.77 confidence (above 0.40 threshold),
+# FallbackIntent may still be selected.
+#
+# Workarounds attempted:
+# - Lowered confidence threshold to 0.40
+# - Added more sample utterances (https, http, www, .com, etc.)
+# - Disabled FallbackIntent code hook
+# - Simplified ProvideURLIntent (removed initialResponseSetting)
+#
+# Potential solutions:
+# 1. Use a slot to capture the URL directly
+# 2. Have Lambda handle FallbackIntent and route based on input pattern
+# 3. Use a different conversation flow (start with prompt, then URL)
+# -----------------------------------------------------------------------------
