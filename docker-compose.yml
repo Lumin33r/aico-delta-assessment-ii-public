@@ -97,7 +97,6 @@ services:
     networks:
       - ai-tutor-network
     restart: "no"
-    restart: "no"
 
 # -----------------------------------------------------------------------------
 # Networks
