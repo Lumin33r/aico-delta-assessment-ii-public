@@ -22,12 +22,15 @@ resource "aws_launch_template" "backend" {
 
   vpc_security_group_ids = [aws_security_group.backend.id]
 
-  user_data = base64encode(templatefile("${path.module}/templates/backend_user_data.sh", {
-    aws_region   = var.aws_region
-    s3_bucket    = aws_s3_bucket.audio.id
-    ollama_model = var.ollama_model
-    backend_port = var.backend_port
-    environment  = var.environment
+  user_data = base64encode(templatefile("${path.module}/templates/container_user_data.sh", {
+    aws_region               = var.aws_region
+    s3_bucket                = aws_s3_bucket.audio.id
+    ollama_model             = var.ollama_model
+    environment              = var.environment
+    git_repo_url             = var.git_repo_url
+    lex_bot_id               = var.create_lex_bot ? aws_lexv2models_bot.tutor[0].id : ""
+    lex_bot_alias_id         = var.lex_bot_alias_id
+    cognito_identity_pool_id = var.create_cognito ? aws_cognito_identity_pool.main[0].id : ""
   }))
 
   metadata_options {
@@ -59,7 +62,7 @@ resource "aws_launch_template" "backend" {
 resource "aws_autoscaling_group" "backend" {
   name                = "${var.project_name}-${var.environment}-backend-asg"
   vpc_zone_identifier = aws_subnet.public[*].id
-  target_group_arns   = [aws_lb_target_group.backend.arn]
+  target_group_arns   = [aws_lb_target_group.frontend.arn]
   health_check_type   = "ELB"
 
   min_size         = var.min_instances

@@ -182,3 +182,19 @@ variable "lambda_memory" {
   type        = number
   default     = 256
 }
+
+# -----------------------------------------------------------------------------
+# Git Repository Configuration (for containerized deployment)
+# -----------------------------------------------------------------------------
+
+variable "git_repo_url" {
+  description = "Git repository URL for cloning application code"
+  type        = string
+  default     = "https://github.com/your-org/ai-personal-tutor.git"
+}
+
+variable "lex_bot_alias_id" {
+  description = "Lex Bot Alias ID (manually created)"
+  type        = string
+  default     = ""
+}

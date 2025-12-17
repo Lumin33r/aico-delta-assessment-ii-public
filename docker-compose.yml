@@ -1,0 +1,146 @@
+# =============================================================================
+# AI Personal Tutor - Docker Compose Configuration
+# =============================================================================
+# Orchestrates all services: Frontend (Nginx), Backend (Flask), Ollama (LLM)
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ---------------------------------------------------------------------------
+  # Frontend Service (Nginx serving React app)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_LEX_BOT_ID: ${VITE_LEX_BOT_ID}
+        VITE_LEX_BOT_ALIAS_ID: ${VITE_LEX_BOT_ALIAS_ID}
+        VITE_AWS_REGION: ${VITE_AWS_REGION:-us-west-2}
+        VITE_COGNITO_IDENTITY_POOL_ID: ${VITE_COGNITO_IDENTITY_POOL_ID}
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: ai-tutor-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ai-tutor-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # ---------------------------------------------------------------------------
+  # Backend Service (Flask + Gunicorn)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai-tutor-backend
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-west-2}
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
+      - S3_BUCKET=${S3_BUCKET}
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:1b}
+      - FLASK_ENV=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ai-tutor-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # Ollama Service (LLM)
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai-tutor-ollama
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ai-tutor-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # ---------------------------------------------------------------------------
+  # Model Initialization (one-time pull)
+  # ---------------------------------------------------------------------------
+  model-init:
+    image: ollama/ollama:latest
+    container_name: ai-tutor-model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling model: ${OLLAMA_MODEL:-llama3.2:1b}"
+        ollama pull ${OLLAMA_MODEL:-llama3.2:1b}
+        echo "Model pull complete"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    networks:
+      - ai-tutor-network
+    restart: "no"
+
+# -----------------------------------------------------------------------------
+# Networks
+# -----------------------------------------------------------------------------
+networks:
+  ai-tutor-network:
+    driver: bridge
+    name: ai-tutor-network
+
+# -----------------------------------------------------------------------------
+# Volumes
+# -----------------------------------------------------------------------------
+volumes:
+  ollama-data:
+    name: ai-tutor-ollama-data

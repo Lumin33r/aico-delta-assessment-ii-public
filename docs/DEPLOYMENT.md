@@ -1,41 +1,100 @@
 # AI Personal Tutor - Production Deployment Guide
 
-A comprehensive guide for deploying the AI Personal Tutor to AWS using Terraform, including EC2 setup, service configuration, and production validation.
+A comprehensive guide for deploying the AI Personal Tutor to AWS using Terraform with containerized services (Docker + Docker Compose).
 
 ---
 
-## Table of Contents
+## Quick Start (TL;DR)
 
-- [Prerequisites](#prerequisites)
-- [Architecture Overview](#architecture-overview)
-- [Phase 1: Infrastructure Deployment](#phase-1-infrastructure-deployment)
-  - [1.1 AWS Credentials Setup](#11-aws-credentials-setup)
-  - [1.2 Terraform Variables Configuration](#12-terraform-variables-configuration)
-  - [1.3 Initialize and Apply Terraform](#13-initialize-and-apply-terraform)
-  - [1.4 Create Lex Bot Alias](#14-create-lex-bot-alias-post-apply)
-- [Phase 2: EC2 Instance Configuration](#phase-2-ec2-instance-configuration)
-  - [2.1 SSH Access Setup](#21-ssh-access-setup)
-  - [2.2 Verify User Data Execution](#22-verify-user-data-execution)
-  - [2.3 Deploy Backend Application Code](#23-deploy-backend-application-code)
-  - [2.4 Configure and Start Services](#24-configure-and-start-services)
-- [Phase 3: Frontend Deployment](#phase-3-frontend-deployment)
-  - [3.1 Build Frontend for Production](#31-build-frontend-for-production)
-  - [3.2 Deploy to S3 + CloudFront (Recommended)](#32-deploy-to-s3--cloudfront-recommended)
-  - [3.3 Alternative: Deploy to EC2/Nginx](#33-alternative-deploy-to-ec2nginx)
-- [Phase 4: Production Validation](#phase-4-production-validation)
-  - [4.1 Health Check Verification](#41-health-check-verification)
-  - [4.2 API Endpoint Testing](#42-api-endpoint-testing)
-  - [4.3 Lex Bot Testing](#43-lex-bot-testing)
-  - [4.4 End-to-End Workflow Test](#44-end-to-end-workflow-test)
-- [Environment Variables Reference](#environment-variables-reference)
-- [Monitoring and Observability](#monitoring-and-observability)
-- [Troubleshooting](#troubleshooting)
-- [Rollback Procedures](#rollback-procedures)
-- [Cleanup and Teardown](#cleanup-and-teardown)
+For experienced users, here's the streamlined deployment:
+
+```bash
+# 1. Deploy Infrastructure
+cd terraform
+
+# Update variables for your environment
+export TF_VAR_git_repo_url="https://github.com/your-org/ai-personal-tutor.git"
+export TF_VAR_lex_bot_alias_id="<your-alias-id>"
+
+terraform init && terraform apply -auto-approve
+
+# 2. Create Lex Bot Alias (one-time after initial deploy)
+aws lexv2-models create-bot-alias \
+  --bot-alias-name prod \
+  --bot-id $(terraform output -raw lex_bot_id) \
+  --bot-version $(terraform output -raw lex_bot_version) \
+  --bot-alias-locale-settings '{"en_US":{"enabled":true}}' \
+  --region us-west-2
+
+# 3. Update Terraform with alias ID and redeploy
+export TF_VAR_lex_bot_alias_id="<alias-id-from-step-2>"
+terraform apply -auto-approve
+
+# 4. Test the deployment
+ALB_DNS=$(terraform output -raw alb_dns_name)
+curl http://$ALB_DNS/api/health
+```
+
+The EC2 instances will automatically:
+
+- Install Docker and Docker Compose
+- Clone the repository
+- Build and start all containers (Frontend, Backend, Ollama)
+- Pull the LLM model
 
 ---
 
-## Prerequisites
+## Containerized Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              AWS Cloud (VPC)                                 │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                    Application Load Balancer                         │    │
+│  │                         (Port 80/443)                                │    │
+│  └──────────────────────────────┬──────────────────────────────────────┘    │
+│                                 │                                            │
+│            ┌────────────────────┼────────────────────┐                      │
+│            ▼                    │                    ▼                      │
+│  ┌──────────────────┐          │          ┌──────────────────┐             │
+│  │   EC2 Instance 1 │          │          │   EC2 Instance 2 │             │
+│  │   (us-west-2a)   │          │          │   (us-west-2b)   │             │
+│  │                  │          │          │                  │             │
+│  │ ┌──────────────┐ │          │          │ ┌──────────────┐ │             │
+│  │ │   Frontend   │ │          │          │ │   Frontend   │ │             │
+│  │ │ (Nginx:80)   │◀┼──────────┘──────────┼▶│ (Nginx:80)   │ │             │
+│  │ └──────┬───────┘ │                     │ └──────┬───────┘ │             │
+│  │        │ /api    │                     │        │ /api    │             │
+│  │        ▼         │                     │        ▼         │             │
+│  │ ┌──────────────┐ │                     │ ┌──────────────┐ │             │
+│  │ │   Backend    │ │                     │ │   Backend    │ │             │
+│  │ │(Flask:8000)  │ │                     │ │(Flask:8000)  │ │             │
+│  │ └──────┬───────┘ │                     │ └──────┬───────┘ │             │
+│  │        │         │                     │        │         │             │
+│  │        ▼         │                     │        ▼         │             │
+│  │ ┌──────────────┐ │                     │ ┌──────────────┐ │             │
+│  │ │   Ollama     │ │                     │ │   Ollama     │ │             │
+│  │ │ (LLM:11434) │ │                     │ │ (LLM:11434) │ │             │
+│  │ └──────────────┘ │                     │ └──────────────┘ │             │
+│  └──────────────────┘                     └──────────────────┘             │
+│                                                                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐    │
+│  │  S3 Audio   │  │   Lex Bot   │  │   Cognito   │  │     Lambda      │    │
+│  │   Bucket    │  │    (V2)     │  │Identity Pool│  │  Fulfillment    │    │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Container Stack (per EC2 instance)
+
+| Service  | Image            | Port  | Description                    |
+| -------- | ---------------- | ----- | ------------------------------ |
+| Frontend | nginx:alpine     | 80    | Serves React app, proxies /api |
+| Backend  | python:3.11-slim | 8000  | Flask API with Gunicorn        |
+| Ollama   | ollama/ollama    | 11434 | Local LLM inference            |
+
+---
 
 ### Required Tools
 
@@ -282,175 +341,152 @@ echo "Lex Bot Alias ID: ${LEX_BOT_ALIAS_ID}"
 
 ---
 
-## Phase 2: EC2 Instance Configuration
+## Phase 2: Containerized EC2 Deployment
 
-### 2.1 SSH Access Setup
+With the containerized deployment, EC2 instances are automatically configured by the user data script to:
+
+1. Install Docker and Docker Compose
+2. Clone the repository
+3. Build and start all containers
+
+### 2.1 Verify Automatic Deployment
+
+After Terraform applies, wait 5-10 minutes for EC2 instances to fully initialize.
 
 ```bash
-# Get instance IP from ASG
+# Get ALB DNS from Terraform output
+ALB_DNS=$(terraform output -raw alb_dns_name)
+
+# Test that the frontend is serving
+curl http://${ALB_DNS}/
+
+# Test backend health via API
+curl http://${ALB_DNS}/api/health
+```
+
+### 2.2 Connect to EC2 for Debugging (if needed)
+
+**Option A: AWS Session Manager (Recommended - No SSH Key Required)**
+
+```bash
+# Get instance ID from ASG
 INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
   --auto-scaling-group-names $(terraform output -raw backend_asg_name) \
-  --query 'AutoScalingGroups[0].Instances[0].InstanceId' \
-  --output text)
+  --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | [0]' \
+  --output text \
+  --region us-west-2)
 
+echo "Instance ID: ${INSTANCE_ID}"
+
+# Connect via Session Manager
+aws ssm start-session --target ${INSTANCE_ID} --region us-west-2
+```
+
+**Option B: SSH Access**
+
+```bash
+# Get instance public IP
 INSTANCE_IP=$(aws ec2 describe-instances \
   --instance-ids ${INSTANCE_ID} \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
-  --output text)
+  --output text \
+  --region us-west-2)
 
-echo "Instance IP: ${INSTANCE_IP}"
-
-# SSH to the instance
 ssh -i ~/.ssh/your-keypair.pem ec2-user@${INSTANCE_IP}
 ```
 
-### 2.2 Verify User Data Execution
-
-Once connected via SSH:
+### 2.3 Check Container Status
 
 ```bash
-# Check user data log for errors
-sudo cat /var/log/user-data.log
+# Switch to root (containers run as root)
+sudo su -
 
-# Verify Ollama is running
-sudo systemctl status ollama
-ollama list  # Should show the pulled model
+# Navigate to app directory
+cd /opt/ai-tutor/app
 
-# Verify backend service is running
-sudo systemctl status ai-tutor-backend
+# Check all container status
+docker compose ps
 
-# Check if placeholder app is responding
-curl http://localhost:8000/health
+# Expected output:
+# NAME                    STATUS                   PORTS
+# ai-tutor-frontend       Up (healthy)             0.0.0.0:80->80/tcp
+# ai-tutor-backend        Up (healthy)             8000/tcp
+# ai-tutor-ollama         Up (healthy)             11434/tcp
 ```
 
-Expected health check response:
-
-```json
-{ "status": "healthy", "service": "ai-tutor-backend" }
-```
-
-### 2.3 Deploy Backend Application Code
-
-**Option A: Deploy from Git Repository**
+### 2.4 View Container Logs
 
 ```bash
-# On the EC2 instance
-sudo -u appuser bash
+# View all logs
+docker compose logs -f
 
-cd /opt/ai-tutor
-rm -rf backend
+# View specific service logs
+docker compose logs -f frontend
+docker compose logs -f backend
+docker compose logs -f ollama
 
-# Clone your repository
-git clone https://github.com/your-org/aico-delta-assessment-ii.git repo
-mv repo/backend ./backend
-rm -rf repo
-
-cd backend
-
-# Create virtual environment
-python3.11 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Copy environment file
-cat > .env << 'EOF'
-AWS_REGION=us-west-2
-S3_BUCKET=<your-s3-bucket-from-terraform>
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.2:1b
-PORT=8000
-FLASK_ENV=production
-LOG_LEVEL=INFO
-EOF
-
-exit  # Exit appuser shell
+# View user-data setup log
+cat /var/log/user-data.log
 ```
 
-**Option B: Deploy from S3 Archive**
+### 2.5 Restart Services
 
 ```bash
-# From your local machine, create and upload archive
-cd aico-delta-assessment-ii/backend
-tar -czvf backend.tar.gz src/ requirements.txt
+# Restart all containers
+docker compose restart
 
-aws s3 cp backend.tar.gz s3://${S3_BUCKET}/deployments/backend.tar.gz
+# Restart specific service
+docker compose restart backend
 
-# On EC2 instance
-sudo -u appuser bash
-cd /opt/ai-tutor/backend
-
-aws s3 cp s3://${S3_BUCKET}/deployments/backend.tar.gz .
-tar -xzvf backend.tar.gz
-rm backend.tar.gz
-
-# Install dependencies
-source venv/bin/activate
-pip install -r requirements.txt
-exit
+# Full rebuild and restart
+docker compose down && docker compose up -d --build
 ```
 
-**Option C: Deploy with rsync (Development)**
+### 2.6 Update Deployed Code
 
 ```bash
-# From local machine - sync code directly
-rsync -avz --exclude='venv' --exclude='.venv' --exclude='__pycache__' \
-  -e "ssh -i ~/.ssh/your-keypair.pem" \
-  backend/ ec2-user@${INSTANCE_IP}:/tmp/backend-code/
+cd /opt/ai-tutor/app
 
-# On EC2 instance
-sudo mv /tmp/backend-code/* /opt/ai-tutor/backend/
-sudo chown -R appuser:appuser /opt/ai-tutor/backend/
+# Pull latest code
+git pull origin main
+
+# Rebuild and restart containers
+docker compose up -d --build
+
+# Check status
+docker compose ps
 ```
 
-### 2.4 Configure and Start Services
+### 2.7 Manual Environment Changes
+
+If you need to modify environment variables:
 
 ```bash
-# Update the systemd service to point to actual app
-sudo tee /etc/systemd/system/ai-tutor-backend.service << 'EOF'
-[Unit]
-Description=AI Tutor Backend Service
-After=network.target ollama.service
-Requires=ollama.service
+cd /opt/ai-tutor/app
 
-[Service]
-User=appuser
-Group=appuser
-WorkingDirectory=/opt/ai-tutor/backend
-Environment="PATH=/opt/ai-tutor/backend/venv/bin"
-Environment="PYTHONPATH=/opt/ai-tutor/backend"
-EnvironmentFile=/opt/ai-tutor/backend/.env
-ExecStart=/opt/ai-tutor/backend/venv/bin/gunicorn \
-    --bind 0.0.0.0:8000 \
-    --workers 2 \
-    --threads 4 \
-    --timeout 300 \
-    --access-logfile /var/log/ai-tutor/access.log \
-    --error-logfile /var/log/ai-tutor/error.log \
-    "src.app:app"
-Restart=always
-RestartSec=5
+# Edit the .env file
+nano .env
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Restart to pick up changes
+docker compose up -d --force-recreate
+```
 
-# Create log directory
-sudo mkdir -p /var/log/ai-tutor
-sudo chown -R appuser:appuser /var/log/ai-tutor
+### 2.8 Health Check Script
 
-# Reload and restart services
-sudo systemctl daemon-reload
-sudo systemctl restart ai-tutor-backend
+A health check script is installed at `/opt/ai-tutor/healthcheck.sh`:
 
-# Verify service is running
-sudo systemctl status ai-tutor-backend
+```bash
+# Run health check
+/opt/ai-tutor/healthcheck.sh
+
+# Expected output: "HEALTHY: All services running"
+```
 
 # Check logs for errors
+
 sudo journalctl -u ai-tutor-backend -f --no-pager -n 50
-```
+
+````
 
 **Verify Full Backend Health:**
 
@@ -474,43 +510,131 @@ curl http://localhost:8000/health | jq
 
 # Test from ALB (external)
 curl http://${ALB_DNS}/health | jq
-```
+````
 
 ---
 
 ## Phase 3: Frontend Deployment
 
-### 3.1 Build Frontend for Production
+With the containerized deployment, the frontend is **automatically deployed** as part of the Docker Compose stack. Nginx serves the React app and proxies API requests to the backend container.
+
+### 3.1 Automatic Deployment (Default)
+
+The frontend is built and deployed automatically when the EC2 instance starts:
+
+1. User data script clones the repository
+2. Docker Compose builds the frontend container (multi-stage: Node → Nginx)
+3. Environment variables are baked in during build time
+4. Nginx serves the app on port 80
+
+**Verify Frontend is Running:**
 
 ```bash
-# On your local machine
-cd aico-delta-assessment-ii/frontend
-
-# Create production environment file
-cat > .env.production << EOF
-VITE_AWS_REGION=us-west-2
-VITE_COGNITO_IDENTITY_POOL_ID=${COGNITO_POOL_ID}
-VITE_LEX_BOT_ID=${LEX_BOT_ID}
-VITE_LEX_BOT_ALIAS_ID=${LEX_BOT_ALIAS_ID}
-VITE_API_URL=http://${ALB_DNS}
-EOF
-
-# Install dependencies
-npm install
-
-# Build for production
-npm run build
-
-# Verify build output
-ls -la dist/
-# Should contain: index.html, assets/
+# From your local machine
+ALB_DNS=$(terraform output -raw alb_dns_name)
+curl http://${ALB_DNS}/
 ```
 
-### 3.2 Deploy to S3 + CloudFront (Recommended)
+### 3.2 Rebuild Frontend (After Code Changes)
+
+If you need to rebuild the frontend with new code or environment variables:
 
 ```bash
-# Create S3 bucket for frontend (if not exists)
-FRONTEND_BUCKET="ai-tutor-frontend-$(aws sts get-caller-identity --query Account --output text)"
+# Connect to EC2
+aws ssm start-session --target ${INSTANCE_ID} --region us-west-2
+sudo su -
+
+cd /opt/ai-tutor/app
+
+# Update environment variables if needed
+nano .env
+
+# Rebuild and restart frontend only
+docker compose up -d --build frontend
+
+# Or rebuild all services
+docker compose up -d --build
+```
+
+### 3.3 Alternative: Local Frontend Development
+
+For active development, run the frontend locally against the deployed backend:
+
+```bash
+# On your LOCAL machine
+cd frontend
+
+# Create local development environment
+cat > .env.local << EOF
+VITE_AWS_REGION=us-west-2
+VITE_API_URL=http://<ALB_DNS>/api
+VITE_LEX_BOT_ID=<your-bot-id>
+VITE_LEX_BOT_ALIAS_ID=<your-alias-id>
+VITE_COGNITO_IDENTITY_POOL_ID=<your-pool-id>
+EOF
+
+# Install dependencies and start dev server
+npm install
+npm run dev
+
+# Access at http://localhost:3000
+```
+
+### 3.4 Alternative: S3 + CloudFront (Production)
+
+For production with global CDN and HTTPS:
+
+```bash
+# Build frontend locally
+cd frontend
+npm install
+npm run build
+
+# Create S3 bucket for static hosting
+aws s3 mb s3://ai-tutor-frontend-prod --region us-west-2
+
+# Enable static website hosting
+aws s3 website s3://ai-tutor-frontend-prod --index-document index.html --error-document index.html
+
+# Upload build
+aws s3 sync dist/ s3://ai-tutor-frontend-prod --delete
+
+# Create CloudFront distribution (optional - for HTTPS)
+# See AWS documentation for CloudFront setup
+```
+
+sudo systemctl enable nginx
+sudo systemctl start nginx
+
+# Verify nginx is running
+
+sudo systemctl status nginx
+
+# Test locally
+
+curl http://localhost/
+
+````
+
+**Step 5: Update ALB Target Group for Frontend**
+
+The ALB needs to route traffic to port 80 (Nginx) for the frontend:
+
+```bash
+# Check current target group configuration
+# Frontend should go to port 80, API to port 8000
+````
+
+### 3.3 Option B: Deploy to S3 + CloudFront (Production)
+
+For production deployments with global CDN and HTTPS:
+
+```bash
+# On your LOCAL machine
+cd ~/codeplatoon/projects/aico-delta-assessment-ii/frontend
+
+# Create S3 bucket for frontend
+FRONTEND_BUCKET="ai-tutor-frontend-$(aws sts get-caller-identity --query Account --output text)-$(date +%s)"
 
 aws s3 mb s3://${FRONTEND_BUCKET} --region us-west-2
 
@@ -518,6 +642,12 @@ aws s3 mb s3://${FRONTEND_BUCKET} --region us-west-2
 aws s3 website s3://${FRONTEND_BUCKET} \
   --index-document index.html \
   --error-document index.html
+
+# Disable block public access
+aws s3api put-public-access-block \
+  --bucket ${FRONTEND_BUCKET} \
+  --public-access-block-configuration \
+  "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
 
 # Set bucket policy for public read
 cat > /tmp/bucket-policy.json << EOF
@@ -539,19 +669,12 @@ aws s3api put-bucket-policy \
   --bucket ${FRONTEND_BUCKET} \
   --policy file:///tmp/bucket-policy.json
 
-# Disable block public access (required for website hosting)
-aws s3api put-public-access-block \
-  --bucket ${FRONTEND_BUCKET} \
-  --public-access-block-configuration \
-  "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
-
-# Upload frontend build with caching headers
+# Upload frontend build
 aws s3 sync dist/ s3://${FRONTEND_BUCKET}/ \
   --delete \
   --cache-control "max-age=31536000" \
   --exclude "index.html"
 
-# Upload index.html with no-cache
 aws s3 cp dist/index.html s3://${FRONTEND_BUCKET}/index.html \
   --cache-control "no-cache, no-store, must-revalidate"
 
@@ -559,78 +682,63 @@ aws s3 cp dist/index.html s3://${FRONTEND_BUCKET}/index.html \
 echo "Frontend URL: http://${FRONTEND_BUCKET}.s3-website-us-west-2.amazonaws.com"
 ```
 
-### 3.3 Alternative: Deploy to EC2/Nginx
+### 3.4 Option C: Run Frontend Locally (Development)
+
+For local development and testing:
 
 ```bash
-# SSH to a frontend EC2 instance (or use backend instance)
-ssh -i ~/.ssh/your-keypair.pem ec2-user@${INSTANCE_IP}
+# Terminal 1: Backend (on EC2 or local)
+# If testing locally, you need Ollama running locally too
 
-# Install Nginx
-sudo dnf install -y nginx
+# Terminal 2: Frontend (local machine)
+cd ~/codeplatoon/projects/aico-delta-assessment-ii/frontend
 
-# Create site configuration
-sudo tee /etc/nginx/conf.d/ai-tutor.conf << 'EOF'
-server {
-    listen 80;
-    server_name _;
-
-    root /var/www/ai-tutor;
-    index index.html;
-
-    # Gzip compression
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
-
-    # Handle SPA routing
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Cache static assets
-    location /assets {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # Proxy API requests to backend
-    location /api {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout 300s;
-    }
-
-    location /health {
-        proxy_pass http://localhost:8000;
-    }
-}
+# Create local development environment
+cat > .env.local << 'EOF'
+VITE_AWS_REGION=us-west-2
+VITE_API_URL=http://Troy-ai-tutor-dev-alb-148039826.us-west-2.elb.amazonaws.com
+VITE_LEX_BOT_ID=YWLKQSVH3F
+VITE_LEX_BOT_ALIAS_ID=EU0RH7BDUK
+VITE_COGNITO_IDENTITY_POOL_ID=us-west-2:25db7c7c-824a-499b-8968-6cee3d1a6d77
 EOF
 
-# Create web directory
-sudo mkdir -p /var/www/ai-tutor
-sudo chown -R nginx:nginx /var/www/ai-tutor
+# Install dependencies
+npm install
 
-# Exit SSH and upload build files from local
-exit
+# Start development server
+npm run dev
 
-# From local machine
-scp -i ~/.ssh/your-keypair.pem -r dist/* ec2-user@${INSTANCE_IP}:/tmp/frontend/
+# Frontend available at http://localhost:5173 (or port shown)
+```
 
-# Back on EC2
-ssh -i ~/.ssh/your-keypair.pem ec2-user@${INSTANCE_IP}
-sudo mv /tmp/frontend/* /var/www/ai-tutor/
+### 3.5 Updating the Frontend
+
+When you need to deploy updated frontend code:
+
+**For EC2 deployment:**
+
+```bash
+# On local machine
+cd ~/codeplatoon/projects/aico-delta-assessment-ii/frontend
+npm run build
+tar -czvf frontend-dist.tar.gz dist/
+aws s3 cp frontend-dist.tar.gz s3://troy-ai-tutor-audio-dev-6344f749/deployments/
+
+# On EC2
+cd /home/ec2-user
+aws s3 cp s3://troy-ai-tutor-audio-dev-6344f749/deployments/frontend-dist.tar.gz .
+tar -xzvf frontend-dist.tar.gz
+sudo cp -r dist/* /var/www/ai-tutor/
 sudo chown -R nginx:nginx /var/www/ai-tutor/
+```
 
-# Test nginx config
-sudo nginx -t
+**For S3 deployment:**
 
-# Start Nginx
-sudo systemctl enable nginx
-sudo systemctl start nginx
-
-# Verify
-curl http://localhost/
+```bash
+# On local machine
+cd ~/codeplatoon/projects/aico-delta-assessment-ii/frontend
+npm run build
+aws s3 sync dist/ s3://${FRONTEND_BUCKET}/ --delete
 ```
 
 ---
@@ -955,6 +1063,107 @@ done
 
 ## Troubleshooting
 
+### Docker Container Issues
+
+#### Issue: Containers Not Starting
+
+**Symptoms:** `docker compose ps` shows containers as "Exited" or "Restarting"
+
+**Diagnosis:**
+
+```bash
+# Check container logs
+cd /opt/ai-tutor/app
+docker compose logs
+
+# Check specific container
+docker compose logs backend
+docker compose logs frontend
+docker compose logs ollama
+
+# Check user-data script execution
+cat /var/log/user-data.log
+```
+
+**Solutions:**
+
+1. Rebuild containers: `docker compose up -d --build`
+2. Check .env file for missing variables
+3. Verify disk space: `df -h`
+4. Check Docker service: `systemctl status docker`
+
+#### Issue: Frontend Shows "502 Bad Gateway"
+
+**Symptoms:** ALB returns 502 when accessing the application
+
+**Diagnosis:**
+
+```bash
+# Check if Nginx container is running
+docker compose ps frontend
+
+# Check Nginx logs
+docker compose logs frontend
+
+# Test backend connectivity from inside Nginx container
+docker exec -it ai-tutor-frontend wget -qO- http://backend:8000/health
+```
+
+**Solutions:**
+
+1. Restart containers: `docker compose restart`
+2. Check backend health: `docker compose logs backend`
+3. Verify network: `docker network ls` and `docker network inspect ai-tutor-network`
+
+#### Issue: Backend Can't Connect to Ollama
+
+**Symptoms:** API requests fail with "connection refused" to Ollama
+
+**Diagnosis:**
+
+```bash
+# Check Ollama container status
+docker compose ps ollama
+
+# Check Ollama logs
+docker compose logs ollama
+
+# Test Ollama from backend container
+docker exec -it ai-tutor-backend curl http://ollama:11434/api/tags
+```
+
+**Solutions:**
+
+1. Wait for model pull: `docker compose logs model-init`
+2. Restart Ollama: `docker compose restart ollama`
+3. Check memory limits in docker-compose.yml
+
+#### Issue: Model Not Pulled
+
+**Symptoms:** Ollama returns empty model list
+
+**Diagnosis:**
+
+```bash
+# Check model-init container logs
+docker compose logs model-init
+
+# List models in Ollama
+docker exec -it ai-tutor-ollama ollama list
+```
+
+**Solutions:**
+
+```bash
+# Manually pull model
+docker exec -it ai-tutor-ollama ollama pull llama3.2:1b
+
+# Or restart model-init
+docker compose restart model-init
+```
+
+### ALB and Target Group Issues
+
 ### Issue: ALB Returns 502 Bad Gateway
 
 **Symptoms:** Browser shows 502 error when accessing the API.
@@ -966,20 +1175,19 @@ done
 aws elbv2 describe-target-health \
   --target-group-arn <target-group-arn>
 
-# SSH to instance and check service
-ssh -i key.pem ec2-user@${INSTANCE_IP}
-sudo systemctl status ai-tutor-backend
-sudo journalctl -u ai-tutor-backend -n 100 --no-pager
+# Connect to EC2 and check containers
+aws ssm start-session --target ${INSTANCE_ID} --region us-west-2
+sudo docker compose -f /opt/ai-tutor/app/docker-compose.yml ps
 
-# Check if port 8000 is listening
-sudo ss -tlnp | grep 8000
+# Check if port 80 is listening
+sudo ss -tlnp | grep 80
 ```
 
 **Solutions:**
 
-1. Restart the backend service: `sudo systemctl restart ai-tutor-backend`
-2. Check logs for Python errors: `sudo tail -100 /var/log/ai-tutor/error.log`
-3. Verify Gunicorn can import the app: `cd /opt/ai-tutor/backend && source venv/bin/activate && python -c "from src.app import app"`
+1. Restart all containers: `cd /opt/ai-tutor/app && docker compose restart`
+2. Check container logs for errors
+3. Verify security group allows port 80 from ALB
 
 ### Issue: Ollama Not Responding
 
@@ -989,20 +1197,19 @@ sudo ss -tlnp | grep 8000
 
 ```bash
 # On EC2 instance
-sudo systemctl status ollama
-sudo journalctl -u ollama -n 50
+docker compose logs ollama
 
 # Check if model is loaded
-ollama list
+docker exec -it ai-tutor-ollama ollama list
 
 # Test Ollama directly
-curl http://localhost:11434/api/tags
+docker exec -it ai-tutor-ollama curl http://localhost:11434/api/tags
 ```
 
 **Solutions:**
 
-1. Restart Ollama: `sudo systemctl restart ollama`
-2. Pull model if missing: `ollama pull llama3.2:1b`
+1. Restart Ollama: `docker compose restart ollama`
+2. Pull model if missing: `docker exec -it ai-tutor-ollama ollama pull llama3.2:1b`
 3. Check disk space: `df -h` (models need ~2-4GB)
 4. Increase instance type if OOM: Consider `t3.large` or `t3.xlarge`
 
@@ -1013,19 +1220,19 @@ curl http://localhost:11434/api/tags
 **Diagnosis:**
 
 ```bash
-# Check Ollama response time
-time curl -X POST http://localhost:11434/api/generate \
+# Check Ollama response time from backend container
+docker exec -it ai-tutor-backend curl -X POST http://ollama:11434/api/generate \
   -d '{"model": "llama3.2:1b", "prompt": "Hello", "stream": false}'
 
 # Check backend logs during session creation
-sudo journalctl -u ai-tutor-backend -f
+docker compose logs -f backend
 ```
 
 **Solutions:**
 
 1. Use smaller model: `llama3.2:1b` instead of `llama3.2`
 2. Increase EC2 instance type
-3. Increase Gunicorn timeout in systemd service
+3. Adjust Ollama resource limits in docker-compose.yml
 4. Check if content extraction is hanging on bad URLs
 
 ### Issue: Lex Bot Not Working

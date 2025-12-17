@@ -86,19 +86,7 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# API rule - route /api/* to backend
-resource "aws_lb_listener_rule" "api" {
-  listener_arn = aws_lb_listener.http.arn
-  priority     = 100
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.backend.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/api/*", "/health"]
-    }
-  }
-}
+# Note: API routing is handled by Nginx within the container
+# The frontend target group points to port 80 where Nginx:
+# - Serves the React app on /
+# - Proxies /api/* requests to the backend container

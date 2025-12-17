@@ -1,0 +1,50 @@
+# =============================================================================
+# Backend Docker Ignore
+# =============================================================================
+# Optimizes Docker build context and layer caching
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments (we build fresh in container)
+.venv/
+venv/
+ENV/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+
+# Development
+.git/
+.gitignore
+*.md
+LICENSE
+
+# Environment files (passed at runtime)
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CLI tool (not needed in production container)
+cli/
+
+# Logs (generated at runtime)
+logs/
+*.log
