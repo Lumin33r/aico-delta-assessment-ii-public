@@ -138,6 +138,15 @@ def handle_create_lesson_plan(event, slots, session_attributes):
                 api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
                 close_intent=True
             )
+    
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't connect to the lesson service. Please try again in a moment.",
+            close_intent=True
+        )
 
 
 def handle_provide_url(event, slots, session_attributes):
@@ -202,15 +211,6 @@ def handle_provide_url(event, slots, session_attributes):
             event,
             session_attributes,
             "I couldn't connect to the lesson service. Please try again in a moment.",
-            close_intent=True
-        )
-
-    except Exception as e:
-        logger.error(f"Backend API error: {str(e)}")
-        return build_response(
-            event,
-            session_attributes,
-            f"I couldn't connect to the lesson service. Please try again in a moment.",
             close_intent=True
         )
 
