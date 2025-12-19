@@ -138,7 +138,7 @@ def handle_create_lesson_plan(event, slots, session_attributes):
                 api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
                 close_intent=True
             )
-    
+
     except Exception as e:
         logger.error(f"Backend API error: {str(e)}")
         return build_response(
@@ -155,16 +155,16 @@ def handle_provide_url(event, slots, session_attributes):
     Extracts URL from the user's input transcript since we don't have a slot.
     """
     import re
-    
+
     # Get the user's input
     input_transcript = event.get('inputTranscript', '')
-    
+
     # Try to extract URL from the input
     url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
     urls = re.findall(url_pattern, input_transcript)
-    
+
     url = urls[0] if urls else None
-    
+
     if not url:
         # No URL found in input, ask for one
         return build_response(
@@ -173,24 +173,24 @@ def handle_provide_url(event, slots, session_attributes):
             "I'd be happy to create lessons for you! Please paste the full URL you'd like me to learn from (starting with http:// or https://).",
             close_intent=True
         )
-    
+
     # Call backend API
     logger.info(f"Creating lesson plan for URL: {url}")
-    
+
     try:
         api_response = call_backend_api('/api/lex/create-lesson', {
             'url': url,
             'user_id': event.get('sessionId', 'anonymous')
         })
-        
+
         if api_response.get('success'):
             # Store session ID in attributes
             session_attributes['tutor_session_id'] = api_response.get('session_id', '')
             session_attributes['lessons'] = json.dumps(api_response.get('lessons', []))
-            
+
             message = api_response.get('message',
                 "I've created your lessons! Would you like to start with lesson 1?")
-            
+
             return build_response(
                 event,
                 session_attributes,
@@ -204,7 +204,7 @@ def handle_provide_url(event, slots, session_attributes):
                 api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
                 close_intent=True
             )
-    
+
     except Exception as e:
         logger.error(f"Backend API error: {str(e)}")
         return build_response(
@@ -325,7 +325,7 @@ def handle_next_lesson(event, slots, session_attributes):
     Handle NextLessonIntent - move to the next lesson.
     """
     tutor_session_id = session_attributes.get('tutor_session_id', '')
-    
+
     if not tutor_session_id:
         return build_response(
             event,
@@ -333,12 +333,12 @@ def handle_next_lesson(event, slots, session_attributes):
             "I don't have any lessons ready yet. Share a URL with me and I'll create some lessons for you!",
             close_intent=True
         )
-    
+
     try:
         api_response = call_backend_api('/api/lex/next-lesson', {
             'session_id': tutor_session_id
         })
-        
+
         if api_response.get('success'):
             message = api_response.get('message', "Moving to the next lesson...")
             return build_response(
@@ -369,7 +369,7 @@ def handle_repeat_lesson(event, slots, session_attributes):
     Handle RepeatLessonIntent - repeat the current lesson.
     """
     tutor_session_id = session_attributes.get('tutor_session_id', '')
-    
+
     if not tutor_session_id:
         return build_response(
             event,
@@ -377,12 +377,12 @@ def handle_repeat_lesson(event, slots, session_attributes):
             "I don't have any lessons ready yet. Share a URL with me and I'll create some lessons for you!",
             close_intent=True
         )
-    
+
     try:
         api_response = call_backend_api('/api/lex/repeat-lesson', {
             'session_id': tutor_session_id
         })
-        
+
         if api_response.get('success'):
             message = api_response.get('message', "Let me play that lesson again...")
             return build_response(
@@ -413,7 +413,7 @@ def handle_get_progress(event, slots, session_attributes):
     Handle GetProgressIntent - show learning progress.
     """
     tutor_session_id = session_attributes.get('tutor_session_id', '')
-    
+
     if not tutor_session_id:
         return build_response(
             event,
@@ -421,12 +421,12 @@ def handle_get_progress(event, slots, session_attributes):
             "You haven't started any lessons yet. Share a URL with me to get started!",
             close_intent=True
         )
-    
+
     try:
         api_response = call_backend_api('/api/lex/progress', {
             'session_id': tutor_session_id
         })
-        
+
         if api_response.get('success'):
             message = api_response.get('message', "Here's your progress...")
             return build_response(
@@ -499,7 +499,7 @@ def call_backend_api(endpoint: str, data: dict) -> dict:
     )
 
     try:
-        with request.urlopen(req, timeout=30) as response:
+        with request.urlopen(req, timeout=90) as response:
             return json.loads(response.read().decode('utf-8'))
     except error.HTTPError as e:
         body = e.read().decode('utf-8')
