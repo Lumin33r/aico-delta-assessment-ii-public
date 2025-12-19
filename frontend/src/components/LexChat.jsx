@@ -28,7 +28,14 @@ function LexChat({ onSessionCreated, onLessonStart }) {
   ])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [sessionId] = useState(() => uuidv4())
+  // Persist Lex session ID in localStorage so session attributes survive page refresh
+  const [sessionId] = useState(() => {
+    const stored = localStorage.getItem('lex_session_id')
+    if (stored) return stored
+    const newId = uuidv4()
+    localStorage.setItem('lex_session_id', newId)
+    return newId
+  })
   const [lexClient, setLexClient] = useState(null)
   const [error, setError] = useState(null)
   const messagesEndRef = useRef(null)
