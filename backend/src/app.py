@@ -560,6 +560,155 @@ def lex_create_lesson():
         }), 500
 
 
+@app.route('/api/lex/create-lesson-async', methods=['POST'])
+def lex_create_lesson_async():
+    """
+    Async version of create-lesson endpoint.
+    Starts lesson creation in background and returns immediately.
+    Use /api/lex/session-status to check when lessons are ready.
+    """
+    import threading
+    
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        user_id = data.get('user_id', 'anonymous')
+
+        if not url:
+            return jsonify({
+                'success': False,
+                'message': "I need a URL to create your lesson. Could you provide one?"
+            }), 400
+
+        # Create session immediately
+        session_id = str(uuid.uuid4())
+        session = TutorSession(session_id, url)
+        session.status = 'processing'
+        sessions[session_id] = session
+        
+        # Store user_id -> session_id mapping for easy lookup
+        if not hasattr(app, 'user_sessions'):
+            app.user_sessions = {}
+        app.user_sessions[user_id] = session_id
+
+        def process_lessons():
+            """Background task to create lessons."""
+            try:
+                logger.info(f"[Async] Starting lesson creation for session {session_id}")
+                session.status = 'extracting'
+                
+                # Extract content
+                content = content_extractor.extract(url)
+                session.content = content
+                session.status = 'planning'
+                
+                # Generate topics
+                topics = podcast_generator.create_lesson_plan(
+                    content=content['text'],
+                    title=content.get('title', 'Untitled'),
+                    num_lessons=3
+                )
+                session.topics = topics
+                session.lessons = [
+                    {'topic': t, 'title': t.get('title', f'Lesson {i+1}')}
+                    for i, t in enumerate(topics)
+                ]
+                session.status = 'ready'
+                logger.info(f"[Async] Lesson creation complete for session {session_id}")
+                
+            except Exception as e:
+                logger.error(f"[Async] Lesson creation failed for session {session_id}: {e}")
+                session.status = 'error'
+                session.error_message = str(e)
+
+        # Start background thread
+        thread = threading.Thread(target=process_lessons, daemon=True)
+        thread.start()
+
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'status': 'processing',
+            'message': "I'm analyzing that content now. This usually takes about a minute. Say 'check status' or 'are my lessons ready?' to see when they're done!"
+        }), 202  # 202 Accepted
+
+    except Exception as e:
+        logger.error(f"Lex create-lesson-async failed: {e}")
+        return jsonify({
+            'success': False,
+            'message': f"I had trouble starting the lesson creation. Error: {str(e)}"
+        }), 500
+
+
+@app.route('/api/lex/session-status', methods=['POST'])
+def lex_session_status():
+    """
+    Check the status of a lesson creation session.
+    Can lookup by session_id or user_id.
+    """
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        user_id = data.get('user_id')
+
+        # Try to find session by user_id if no session_id provided
+        if not session_id and user_id:
+            if hasattr(app, 'user_sessions'):
+                session_id = app.user_sessions.get(user_id)
+
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'status': 'not_found',
+                'message': "I don't have any lessons in progress for you. Share a URL to get started!"
+            }), 404
+
+        session = sessions.get(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'status': 'not_found',
+                'message': "I couldn't find that session. It may have expired. Share a new URL to create lessons!"
+            }), 404
+
+        if session.status == 'ready':
+            lesson_titles = [l['title'] for l in session.lessons]
+            return jsonify({
+                'success': True,
+                'status': 'ready',
+                'session_id': session_id,
+                'message': f"Your lessons are ready! I created {len(lesson_titles)} lessons: " +
+                          ", ".join(lesson_titles) +
+                          ". Would you like to start with lesson 1?",
+                'lessons': lesson_titles
+            }), 200
+        elif session.status == 'error':
+            return jsonify({
+                'success': False,
+                'status': 'error',
+                'message': f"I had trouble creating lessons from that URL: {session.error_message}. Please try a different URL."
+            }), 200
+        else:
+            status_messages = {
+                'processing': "I'm still working on your lessons...",
+                'extracting': "I'm reading and extracting content from that page...",
+                'planning': "I'm creating your lesson plan now..."
+            }
+            return jsonify({
+                'success': True,
+                'status': session.status,
+                'session_id': session_id,
+                'message': status_messages.get(session.status, "Still processing...") + " Check back in a moment!"
+            }), 200
+
+    except Exception as e:
+        logger.error(f"Lex session-status failed: {e}")
+        return jsonify({
+            'success': False,
+            'message': f"I had trouble checking the status. Error: {str(e)}"
+        }), 500
+
+
 @app.route('/api/lex/start-lesson', methods=['POST'])
 def lex_start_lesson():
     """

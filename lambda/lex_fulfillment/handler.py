@@ -72,6 +72,7 @@ def lambda_handler(event, context):
         'NextLessonIntent': handle_next_lesson,
         'RepeatLessonIntent': handle_repeat_lesson,
         'GetProgressIntent': handle_get_progress,
+        'CheckStatusIntent': handle_check_status,  # New async status check
         'FallbackIntent': handle_fallback,
     }
 
@@ -153,6 +154,7 @@ def handle_provide_url(event, slots, session_attributes):
     """
     Handle ProvideURLIntent - user provides a URL to learn from.
     Extracts URL from the user's input transcript since we don't have a slot.
+    Uses async processing to avoid Lex timeout.
     """
     import re
 
@@ -174,22 +176,23 @@ def handle_provide_url(event, slots, session_attributes):
             close_intent=True
         )
 
-    # Call backend API
-    logger.info(f"Creating lesson plan for URL: {url}")
+    # Call backend API - use async endpoint to avoid timeout
+    logger.info(f"Creating lesson plan (async) for URL: {url}")
+    user_id = event.get('sessionId', 'anonymous')
 
     try:
-        api_response = call_backend_api('/api/lex/create-lesson', {
+        api_response = call_backend_api('/api/lex/create-lesson-async', {
             'url': url,
-            'user_id': event.get('sessionId', 'anonymous')
+            'user_id': user_id
         })
 
         if api_response.get('success'):
-            # Store session ID in attributes
+            # Store session ID in attributes for later lookup
             session_attributes['tutor_session_id'] = api_response.get('session_id', '')
-            session_attributes['lessons'] = json.dumps(api_response.get('lessons', []))
+            session_attributes['processing_url'] = url
 
             message = api_response.get('message',
-                "I've created your lessons! Would you like to start with lesson 1?")
+                "I'm creating your lessons now. This takes about a minute. Say 'check status' when you're ready!")
 
             return build_response(
                 event,
@@ -201,7 +204,7 @@ def handle_provide_url(event, slots, session_attributes):
             return build_response(
                 event,
                 session_attributes,
-                api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
+                api_response.get('message', "I had trouble starting lesson creation. Please try again."),
                 close_intent=True
             )
 
@@ -211,6 +214,52 @@ def handle_provide_url(event, slots, session_attributes):
             event,
             session_attributes,
             "I couldn't connect to the lesson service. Please try again in a moment.",
+            close_intent=True
+        )
+
+
+def handle_check_status(event, slots, session_attributes):
+    """
+    Handle CheckStatusIntent - check if lessons are ready.
+    """
+    tutor_session_id = session_attributes.get('tutor_session_id', '')
+    user_id = event.get('sessionId', 'anonymous')
+
+    if not tutor_session_id:
+        return build_response(
+            event,
+            session_attributes,
+            "I don't have any lessons in progress. Share a URL to get started!",
+            close_intent=True
+        )
+
+    try:
+        api_response = call_backend_api('/api/lex/session-status', {
+            'session_id': tutor_session_id,
+            'user_id': user_id
+        })
+
+        status = api_response.get('status', 'unknown')
+        
+        if status == 'ready':
+            # Lessons are ready - update session attributes
+            session_attributes['lessons'] = json.dumps(api_response.get('lessons', []))
+            
+        message = api_response.get('message', "I'm still working on your lessons...")
+        
+        return build_response(
+            event,
+            session_attributes,
+            message,
+            close_intent=True
+        )
+
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't check the status. Please try again in a moment.",
             close_intent=True
         )
 
