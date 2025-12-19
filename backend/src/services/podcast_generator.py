@@ -184,7 +184,7 @@ IMPORTANT: Return ONLY the JSON, no other text. Each text segment should be 2-4 
                         "num_predict": 4096
                     }
                 },
-                timeout=120
+                timeout=300  # 5 minutes for script generation
             )
             response.raise_for_status()
 
@@ -193,7 +193,7 @@ IMPORTANT: Return ONLY the JSON, no other text. Each text segment should be 2-4 
 
         except requests.exceptions.Timeout:
             logger.error("Ollama request timed out")
-            raise TimeoutError("Ollama request timed out after 120 seconds")
+            raise TimeoutError("Ollama request timed out after 300 seconds")
         except requests.exceptions.RequestException as e:
             logger.error(f"Ollama request failed: {e}")
             raise ConnectionError(f"Failed to connect to Ollama: {e}")

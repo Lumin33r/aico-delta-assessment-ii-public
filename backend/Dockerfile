@@ -71,4 +71,5 @@ EXPOSE 8000
 # Run with gunicorn
 # Using 1 worker to ensure in-memory session storage works correctly
 # Increased threads to 8 to maintain concurrency
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "8", "--timeout", "120", "app:app"]
+# 300s timeout for long-running audio generation requests
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "8", "--timeout", "300", "app:app"]
