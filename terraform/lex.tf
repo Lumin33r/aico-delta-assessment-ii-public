@@ -33,9 +33,9 @@ resource "aws_lexv2models_bot" "tutor" {
 resource "aws_lexv2models_bot_locale" "en_us" {
   count = var.create_lex_bot ? 1 : 0
 
-  bot_id                           = aws_lexv2models_bot.tutor[0].id
-  bot_version                      = "DRAFT"
-  locale_id                        = "en_US"
+  bot_id      = aws_lexv2models_bot.tutor[0].id
+  bot_version = "DRAFT"
+  locale_id   = "en_US"
   # Lowered from 0.70 to 0.40 to allow ProvideURLIntent to match with partial confidence
   n_lu_intent_confidence_threshold = 0.40
 

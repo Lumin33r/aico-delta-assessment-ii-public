@@ -193,8 +193,19 @@ variable "git_repo_url" {
   default     = "https://github.com/Lumin33r/aico-delta-assessment-ii-public.git"
 }
 
+# -----------------------------------------------------------------------------
+# Lex Bot Configuration (Manually Created Resources)
+# -----------------------------------------------------------------------------
+# The Lex bot alias must be created manually after initial terraform apply
+# because the AWS provider doesn't fully support bot alias with Lambda hooks.
+#
+# After creating the alias via AWS CLI, update this value and run:
+#   terraform apply -auto-approve
+#   aws autoscaling start-instance-refresh --auto-scaling-group-name "<asg-name>" ...
+# -----------------------------------------------------------------------------
+
 variable "lex_bot_alias_id" {
-  description = "Lex Bot Alias ID (manually created)"
+  description = "Lex Bot Alias ID (created manually after initial deploy)"
   type        = string
-  default     = "8GHUOBWQ16"
+  default     = "QX1ZJI4KAG" # Updated 2025-12-18
 }

@@ -9,28 +9,41 @@ A comprehensive guide for deploying the AI Personal Tutor to AWS using Terraform
 For experienced users, here's the streamlined deployment:
 
 ```bash
-# 1. Deploy Infrastructure
+# 1. Deploy Infrastructure (First Time - Use Placeholder Alias ID)
 cd terraform
-
-# Update variables for your environment
-export TF_VAR_git_repo_url="https://github.com/your-org/ai-personal-tutor.git"
-export TF_VAR_lex_bot_alias_id="EU0RH7BDUK"
-
 terraform init && terraform apply -auto-approve
 
-# 2. Create Lex Bot Alias (one-time after initial deploy)
+# 2. Create Lex Bot Alias (After Initial Deploy)
+# Get values from terraform output
+BOT_ID=$(terraform output -raw lex_bot_id)
+BOT_VERSION=$(terraform output -raw lex_bot_version)
+LAMBDA_ARN=$(terraform output -raw lambda_function_arn)
+
+# Create the alias with Lambda fulfillment
 aws lexv2-models create-bot-alias \
   --bot-alias-name prod \
-  --bot-id $(terraform output -raw lex_bot_id) \
-  --bot-version $(terraform output -raw lex_bot_version) \
-  --bot-alias-locale-settings '{"en_US":{"enabled":true}}' \
+  --bot-id $BOT_ID \
+  --bot-version $BOT_VERSION \
+  --bot-alias-locale-settings "{\"en_US\":{\"enabled\":true,\"codeHookSpecification\":{\"lambdaCodeHook\":{\"lambdaARN\":\"$LAMBDA_ARN\",\"codeHookInterfaceVersion\":\"1.0\"}}}}" \
   --region us-west-2
 
-# 3. Update Terraform with alias ID and redeploy
-export TF_VAR_lex_bot_alias_id="<alias-id-from-step-2>"
+# Note the botAliasId from the output (e.g., "QX1ZJI4KAG")
+
+# 3. Update variables.tf with the New Alias ID
+# Edit terraform/variables.tf and set:
+#   default = "<your-new-alias-id>"
+# in the lex_bot_alias_id variable block
+
+# 4. Re-apply Terraform and Refresh Instances
 terraform apply -auto-approve
 
-# 4. Test the deployment
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name "$(terraform output -raw backend_asg_name)" \
+  --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 300}' \
+  --region us-west-2
+
+# 5. Wait for Instance Refresh and Test
+sleep 180  # Wait ~3 minutes
 ALB_DNS=$(terraform output -raw alb_dns_name)
 curl http://$ALB_DNS/api/health
 ```
@@ -309,34 +322,89 @@ echo "Cognito Pool: ${COGNITO_POOL_ID}"
 
 ### 1.4 Create Lex Bot Alias (Post-Apply)
 
-Terraform cannot fully manage Lex bot aliases with Lambda hooks. Create manually:
+Terraform cannot fully manage Lex bot aliases with Lambda hooks. This must be created manually **after the initial terraform apply**.
+
+> **IMPORTANT**: The first `terraform apply` will deploy EC2 instances with a placeholder alias ID. After creating the real alias, you must update variables.tf and trigger an instance refresh.
+
+**Step 1: Get Required Values**
 
 ```bash
-# Get required values from Terraform output
-LEX_BOT_ID=$(terraform output -raw lex_bot_id)
-LEX_BOT_VERSION=$(terraform output -raw lex_bot_version)
+# Get values from Terraform output
+BOT_ID=$(terraform output -raw lex_bot_id)
+BOT_VERSION=$(terraform output -raw lex_bot_version)
 LAMBDA_ARN=$(terraform output -raw lambda_function_arn)
 
-# Create the bot alias with Lambda fulfillment
+echo "Bot ID: $BOT_ID"
+echo "Bot Version: $BOT_VERSION"
+echo "Lambda ARN: $LAMBDA_ARN"
+```
+
+**Step 2: Create the Bot Alias with Lambda Fulfillment**
+
+```bash
 aws lexv2-models create-bot-alias \
   --bot-alias-name "prod" \
-  --bot-id "${LEX_BOT_ID}" \
-  --bot-version "${LEX_BOT_VERSION}" \
-  --bot-alias-locale-settings '{
-    "en_US": {
-      "enabled": true,
-      "codeHookSpecification": {
-        "lambdaCodeHook": {
-          "lambdaARN": "'"${LAMBDA_ARN}"'",
-          "codeHookInterfaceVersion": "1.0"
-        }
-      }
-    }
-  }'
+  --bot-id "${BOT_ID}" \
+  --bot-version "${BOT_VERSION}" \
+  --bot-alias-locale-settings "{\"en_US\":{\"enabled\":true,\"codeHookSpecification\":{\"lambdaCodeHook\":{\"lambdaARN\":\"${LAMBDA_ARN}\",\"codeHookInterfaceVersion\":\"1.0\"}}}}" \
+  --region us-west-2
+```
 
-# Save the alias ID from the response
-export LEX_BOT_ALIAS_ID="<alias-id-from-response>"
-echo "Lex Bot Alias ID: ${LEX_BOT_ALIAS_ID}"
+**Expected Output:**
+```json
+{
+    "botAliasId": "QX1ZJI4KAG",
+    "botAliasName": "prod",
+    "botVersion": "1",
+    "botAliasLocaleSettings": {
+        "en_US": {
+            "enabled": true,
+            "codeHookSpecification": {...}
+        }
+    },
+    "botAliasStatus": "Available",
+    ...
+}
+```
+
+**Step 3: Update variables.tf with the New Alias ID**
+
+Edit `terraform/variables.tf` and update the `lex_bot_alias_id` variable:
+
+```hcl
+variable "lex_bot_alias_id" {
+  description = "Lex Bot Alias ID (created manually after initial deploy)"
+  type        = string
+  default     = "QX1ZJI4KAG"  # <-- Replace with your botAliasId from Step 2
+}
+```
+
+**Step 4: Re-apply Terraform and Trigger Instance Refresh**
+
+```bash
+# Apply the updated alias ID to infrastructure
+terraform apply -auto-approve
+
+# Trigger instance refresh to deploy the new .env to EC2
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name "$(terraform output -raw backend_asg_name)" \
+  --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 300}' \
+  --region us-west-2
+
+# Monitor the refresh status
+watch -n 10 'aws autoscaling describe-instance-refreshes \
+  --auto-scaling-group-name "$(terraform output -raw backend_asg_name)" \
+  --query "InstanceRefreshes[0].{Status:Status,Progress:PercentageComplete}" \
+  --region us-west-2'
+```
+
+**Step 5: Verify Deployment**
+
+Wait 3-5 minutes for the instance refresh to complete, then test:
+
+```bash
+ALB_DNS=$(terraform output -raw alb_dns_name)
+curl http://${ALB_DNS}/api/health
 ```
 
 ---
