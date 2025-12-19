@@ -568,7 +568,7 @@ def lex_create_lesson_async():
     Use /api/lex/session-status to check when lessons are ready.
     """
     import threading
-    
+
     try:
         data = request.get_json()
         url = data.get('url')
@@ -585,7 +585,7 @@ def lex_create_lesson_async():
         session = TutorSession(session_id, url)
         session.status = 'processing'
         sessions[session_id] = session
-        
+
         # Store user_id -> session_id mapping for easy lookup
         if not hasattr(app, 'user_sessions'):
             app.user_sessions = {}
@@ -596,12 +596,12 @@ def lex_create_lesson_async():
             try:
                 logger.info(f"[Async] Starting lesson creation for session {session_id}")
                 session.status = 'extracting'
-                
+
                 # Extract content
                 content = content_extractor.extract(url)
                 session.content = content
                 session.status = 'planning'
-                
+
                 # Generate topics
                 topics = podcast_generator.create_lesson_plan(
                     content=content['text'],
@@ -615,7 +615,7 @@ def lex_create_lesson_async():
                 ]
                 session.status = 'ready'
                 logger.info(f"[Async] Lesson creation complete for session {session_id}")
-                
+
             except Exception as e:
                 logger.error(f"[Async] Lesson creation failed for session {session_id}: {e}")
                 session.status = 'error'

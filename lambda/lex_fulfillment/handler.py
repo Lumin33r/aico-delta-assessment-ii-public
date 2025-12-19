@@ -240,13 +240,13 @@ def handle_check_status(event, slots, session_attributes):
         })
 
         status = api_response.get('status', 'unknown')
-        
+
         if status == 'ready':
             # Lessons are ready - update session attributes
             session_attributes['lessons'] = json.dumps(api_response.get('lessons', []))
-            
+
         message = api_response.get('message', "I'm still working on your lessons...")
-        
+
         return build_response(
             event,
             session_attributes,
