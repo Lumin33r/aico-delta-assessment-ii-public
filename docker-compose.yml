@@ -35,6 +35,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: ai-tutor-backend
+    ports:
+      - "8000:8000"
     environment:
       - AWS_REGION=${AWS_REGION:-us-west-2}
       - AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
