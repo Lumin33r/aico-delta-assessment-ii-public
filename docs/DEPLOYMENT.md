@@ -351,6 +351,7 @@ aws lexv2-models create-bot-alias \
 ```
 
 **Expected Output:**
+
 ```json
 {
     "botAliasId": "QX1ZJI4KAG",

@@ -55,15 +55,23 @@ def lambda_handler(event, context):
     slots = event['sessionState']['intent'].get('slots', {})
     session_attributes = event['sessionState'].get('sessionAttributes', {}) or {}
     session_id = event.get('sessionId', '')
+    input_transcript = event.get('inputTranscript', '')
 
-    logger.info(f"Intent: {intent_name}, Slots: {slots}")
+    logger.info(f"Intent: {intent_name}, Slots: {slots}, Input: {input_transcript}")
 
     # Route to appropriate handler
+    # Map Terraform intent names to handlers
     handlers = {
         'CreateLessonPlan': handle_create_lesson_plan,
+        'ProvideURLIntent': handle_provide_url,  # Terraform intent name
         'StartLesson': handle_start_lesson,
+        'StartLessonIntent': handle_start_lesson,  # Terraform intent name
         'WelcomeIntent': handle_welcome,
         'HelpIntent': handle_help,
+        'GetHelpIntent': handle_help,  # Terraform intent name
+        'NextLessonIntent': handle_next_lesson,
+        'RepeatLessonIntent': handle_repeat_lesson,
+        'GetProgressIntent': handle_get_progress,
         'FallbackIntent': handle_fallback,
     }
 
@@ -130,6 +138,72 @@ def handle_create_lesson_plan(event, slots, session_attributes):
                 api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
                 close_intent=True
             )
+
+
+def handle_provide_url(event, slots, session_attributes):
+    """
+    Handle ProvideURLIntent - user provides a URL to learn from.
+    Extracts URL from the user's input transcript since we don't have a slot.
+    """
+    import re
+    
+    # Get the user's input
+    input_transcript = event.get('inputTranscript', '')
+    
+    # Try to extract URL from the input
+    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+    urls = re.findall(url_pattern, input_transcript)
+    
+    url = urls[0] if urls else None
+    
+    if not url:
+        # No URL found in input, ask for one
+        return build_response(
+            event,
+            session_attributes,
+            "I'd be happy to create lessons for you! Please paste the full URL you'd like me to learn from (starting with http:// or https://).",
+            close_intent=True
+        )
+    
+    # Call backend API
+    logger.info(f"Creating lesson plan for URL: {url}")
+    
+    try:
+        api_response = call_backend_api('/api/lex/create-lesson', {
+            'url': url,
+            'user_id': event.get('sessionId', 'anonymous')
+        })
+        
+        if api_response.get('success'):
+            # Store session ID in attributes
+            session_attributes['tutor_session_id'] = api_response.get('session_id', '')
+            session_attributes['lessons'] = json.dumps(api_response.get('lessons', []))
+            
+            message = api_response.get('message',
+                "I've created your lessons! Would you like to start with lesson 1?")
+            
+            return build_response(
+                event,
+                session_attributes,
+                message,
+                close_intent=True
+            )
+        else:
+            return build_response(
+                event,
+                session_attributes,
+                api_response.get('message', "I had trouble creating lessons from that URL. Please try a different one."),
+                close_intent=True
+            )
+    
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't connect to the lesson service. Please try again in a moment.",
+            close_intent=True
+        )
 
     except Exception as e:
         logger.error(f"Backend API error: {str(e)}")
@@ -244,6 +318,138 @@ def handle_help(event, slots, session_attributes):
         message,
         close_intent=True
     )
+
+
+def handle_next_lesson(event, slots, session_attributes):
+    """
+    Handle NextLessonIntent - move to the next lesson.
+    """
+    tutor_session_id = session_attributes.get('tutor_session_id', '')
+    
+    if not tutor_session_id:
+        return build_response(
+            event,
+            session_attributes,
+            "I don't have any lessons ready yet. Share a URL with me and I'll create some lessons for you!",
+            close_intent=True
+        )
+    
+    try:
+        api_response = call_backend_api('/api/lex/next-lesson', {
+            'session_id': tutor_session_id
+        })
+        
+        if api_response.get('success'):
+            message = api_response.get('message', "Moving to the next lesson...")
+            return build_response(
+                event,
+                session_attributes,
+                message,
+                close_intent=True
+            )
+        else:
+            return build_response(
+                event,
+                session_attributes,
+                api_response.get('message', "There are no more lessons. You've completed all of them! 🎉"),
+                close_intent=True
+            )
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't get the next lesson. Please try again.",
+            close_intent=True
+        )
+
+
+def handle_repeat_lesson(event, slots, session_attributes):
+    """
+    Handle RepeatLessonIntent - repeat the current lesson.
+    """
+    tutor_session_id = session_attributes.get('tutor_session_id', '')
+    
+    if not tutor_session_id:
+        return build_response(
+            event,
+            session_attributes,
+            "I don't have any lessons ready yet. Share a URL with me and I'll create some lessons for you!",
+            close_intent=True
+        )
+    
+    try:
+        api_response = call_backend_api('/api/lex/repeat-lesson', {
+            'session_id': tutor_session_id
+        })
+        
+        if api_response.get('success'):
+            message = api_response.get('message', "Let me play that lesson again...")
+            return build_response(
+                event,
+                session_attributes,
+                message,
+                close_intent=True
+            )
+        else:
+            return build_response(
+                event,
+                session_attributes,
+                api_response.get('message', "I couldn't repeat the lesson. Please try again."),
+                close_intent=True
+            )
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't repeat the lesson. Please try again.",
+            close_intent=True
+        )
+
+
+def handle_get_progress(event, slots, session_attributes):
+    """
+    Handle GetProgressIntent - show learning progress.
+    """
+    tutor_session_id = session_attributes.get('tutor_session_id', '')
+    
+    if not tutor_session_id:
+        return build_response(
+            event,
+            session_attributes,
+            "You haven't started any lessons yet. Share a URL with me to get started!",
+            close_intent=True
+        )
+    
+    try:
+        api_response = call_backend_api('/api/lex/progress', {
+            'session_id': tutor_session_id
+        })
+        
+        if api_response.get('success'):
+            message = api_response.get('message', "Here's your progress...")
+            return build_response(
+                event,
+                session_attributes,
+                message,
+                close_intent=True
+            )
+        else:
+            return build_response(
+                event,
+                session_attributes,
+                api_response.get('message', "I couldn't get your progress. Please try again."),
+                close_intent=True
+            )
+    except Exception as e:
+        logger.error(f"Backend API error: {str(e)}")
+        return build_response(
+            event,
+            session_attributes,
+            "I couldn't get your progress. Please try again.",
+            close_intent=True
+        )
 
 
 def handle_fallback(event, slots, session_attributes):
