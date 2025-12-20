@@ -1609,19 +1609,20 @@ grep "@app.route('/api/lex/" backend/src/app.py
 ```
 
 **Cause:** Lambda handler calls backend endpoints that don't exist. This happens when:
+
 - New intents are added to Lambda without corresponding backend endpoints
 - Backend endpoints are renamed or removed
 
 **Required Endpoint Alignment:**
 
-| Lambda Handler Function | Backend Endpoint |
-|------------------------|------------------|
-| `handle_provide_url` | `/api/lex/create-lesson-async` |
-| `handle_check_status` | `/api/lex/session-status` |
-| `handle_start_lesson` | `/api/lex/start-lesson` |
-| `handle_next_lesson` | `/api/lex/next-lesson` |
-| `handle_repeat_lesson` | `/api/lex/repeat-lesson` |
-| `handle_get_progress` | `/api/lex/progress` |
+| Lambda Handler Function | Backend Endpoint               |
+| ----------------------- | ------------------------------ |
+| `handle_provide_url`    | `/api/lex/create-lesson-async` |
+| `handle_check_status`   | `/api/lex/session-status`      |
+| `handle_start_lesson`   | `/api/lex/start-lesson`        |
+| `handle_next_lesson`    | `/api/lex/next-lesson`         |
+| `handle_repeat_lesson`  | `/api/lex/repeat-lesson`       |
+| `handle_get_progress`   | `/api/lex/progress`            |
 
 **Solution:**
 

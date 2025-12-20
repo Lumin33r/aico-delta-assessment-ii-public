@@ -794,9 +794,9 @@ def lex_progress():
         # Count completed lessons (those with audio generated)
         total_lessons = len(session.lessons)
         completed_lessons = sum(1 for l in session.lessons if l.get('audio_url'))
-        
+
         lesson_titles = [l['title'] for l in session.lessons]
-        
+
         if completed_lessons == 0:
             message = f"You have {total_lessons} lessons ready: {', '.join(lesson_titles)}. Say 'start lesson 1' to begin!"
         elif completed_lessons < total_lessons:
@@ -912,7 +912,7 @@ def lex_repeat_lesson():
             }), 400
 
         lesson = session.lessons[lesson_num - 1]
-        
+
         if lesson.get('audio_url'):
             return jsonify({
                 'success': True,
