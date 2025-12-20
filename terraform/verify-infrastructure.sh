@@ -97,8 +97,8 @@ else
     echo -e "${RED}✗${NC} ALB HTTP Response: $HTTP_CODE (expected 200)"
 fi
 
-# Get target group health
-TG_ARN=$(aws elbv2 describe-target-groups --query "TargetGroups[?contains(TargetGroupName,'ai-tutor')].TargetGroupArn" --output text 2>/dev/null | head -1)
+# Get target group health (use frontend-tg since ASG registers instances there, nginx proxies to backend)
+TG_ARN=$(aws elbv2 describe-target-groups --query "TargetGroups[?contains(TargetGroupName,'frontend-tg')].TargetGroupArn" --output text 2>/dev/null | awk '{print $1}')
 if [[ -n "$TG_ARN" ]]; then
     HEALTHY_TARGETS=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)' --output text 2>/dev/null || echo "0")
     check "Healthy Targets" "$HEALTHY_TARGETS" "1"
