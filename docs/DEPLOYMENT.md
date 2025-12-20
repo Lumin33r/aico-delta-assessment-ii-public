@@ -87,12 +87,13 @@ lex_bot_alias_id = "YOUR_ALIAS_ID"  # Get from: aws lexv2-models list-bot-aliase
 
 ### Common Deployment Pitfalls
 
-| Issue | Cause | Prevention |
-|-------|-------|------------|
-| Lambda timeout (30s) | NAT Gateway disabled | Set `enable_nat_gateway = true` |
-| Lambda can't reach backend | Wrong BACKEND_URL port | ALB uses port 80, not 8000 |
-| "Invalid BotId/BotAliasId" | Stale alias ID | Update `lex_bot_alias_id` after creating alias |
-| "Alias isn't built" | DRAFT locale not built | Build locale and create version before alias |
+| Issue                      | Cause                    | Prevention                                     |
+| -------------------------- | ------------------------ | ---------------------------------------------- |
+| Lambda timeout (30s)       | NAT Gateway disabled     | Set `enable_nat_gateway = true`                |
+| Lambda can't reach backend | Wrong BACKEND_URL port   | ALB uses port 80, not 8000                     |
+| "Invalid BotId/BotAliasId" | Stale alias ID           | Update `lex_bot_alias_id` after creating alias |
+| "Alias isn't built"        | DRAFT locale not built   | Build locale and create version before alias   |
+| "Endpoint not found"       | Missing backend endpoint | Ensure all Lambda endpoints exist in backend   |
 
 See [Troubleshooting](#troubleshooting) for detailed solutions.
 
@@ -1483,15 +1484,17 @@ curl -v http://$(terraform output -raw alb_dns_name)/api/health
 **Common Causes & Solutions:**
 
 1. **NAT Gateway disabled:** Lambda in private subnets cannot reach ALB without NAT Gateway
+
    ```bash
    # In terraform.tfvars, ensure:
    enable_nat_gateway = true
-   
+
    # Then re-apply
    terraform apply -auto-approve
    ```
 
 2. **Wrong BACKEND_URL port:** Lambda may be configured with wrong port
+
    ```bash
    # Check if BACKEND_URL has wrong port (should NOT have :8000)
    # ALB listens on port 80, not 8000
@@ -1588,6 +1591,49 @@ aws lexv2-models update-bot-alias \
   --bot-alias-name prod \
   --bot-version $LATEST_VERSION
 ```
+
+### Issue: Lex Intent Returns "Endpoint not found"
+
+**Symptoms:** Lex intents return error message, Lambda logs show `HTTP Error 404: {"error":"Endpoint not found"}`
+
+**Diagnosis:**
+
+```bash
+# Check Lambda logs for 404 errors
+aws logs tail /aws/lambda/$(terraform output -raw lambda_function_name) --since 10m \
+  | grep -E "ERROR.*404|Endpoint not found"
+
+# List endpoints Lambda expects vs backend provides
+grep "call_backend_api('/api/lex/" lambda/lex_fulfillment/handler.py
+grep "@app.route('/api/lex/" backend/src/app.py
+```
+
+**Cause:** Lambda handler calls backend endpoints that don't exist. This happens when:
+- New intents are added to Lambda without corresponding backend endpoints
+- Backend endpoints are renamed or removed
+
+**Required Endpoint Alignment:**
+
+| Lambda Handler Function | Backend Endpoint |
+|------------------------|------------------|
+| `handle_provide_url` | `/api/lex/create-lesson-async` |
+| `handle_check_status` | `/api/lex/session-status` |
+| `handle_start_lesson` | `/api/lex/start-lesson` |
+| `handle_next_lesson` | `/api/lex/next-lesson` |
+| `handle_repeat_lesson` | `/api/lex/repeat-lesson` |
+| `handle_get_progress` | `/api/lex/progress` |
+
+**Solution:**
+
+1. Add missing endpoints to `backend/src/app.py`
+2. Commit and push changes
+3. Refresh EC2 instances to deploy:
+   ```bash
+   git add backend/src/app.py && git commit -m "Add missing Lex endpoints" && git push
+   aws autoscaling start-instance-refresh \
+     --auto-scaling-group-name "$(terraform output -raw backend_asg_name)" \
+     --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 300}'
+   ```
 
 ### Issue: Audio Not Generating
 
