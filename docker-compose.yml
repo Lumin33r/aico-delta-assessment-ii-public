@@ -45,7 +45,8 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:1b}
       - FLASK_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-aitutor}:${POSTGRES_PASSWORD:-aitutor}@postgres:5432/${POSTGRES_DB:-aitutor}
+      # PostgreSQL credentials fetched from AWS Secrets Manager (no defaults for security)
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
       ollama:
         condition: service_started
@@ -90,16 +91,18 @@ services:
     image: postgres:15-alpine
     container_name: ai-tutor-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-aitutor}
-      POSTGRES_USER: ${POSTGRES_USER:-aitutor}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aitutor}
+      # Credentials fetched from AWS Secrets Manager via fetch-secrets.sh
+      # NEVER commit real passwords - they are injected at runtime
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/init-db:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-aitutor}", "-d", "${POSTGRES_DB:-aitutor}"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5

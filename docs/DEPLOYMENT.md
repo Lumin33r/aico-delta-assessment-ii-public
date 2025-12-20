@@ -13,6 +13,10 @@ For experienced users, here's the streamlined deployment:
 cd terraform
 terraform init && terraform apply -auto-approve
 
+# NOTE: PostgreSQL password is automatically generated and stored in AWS Secrets Manager
+# The EC2 instances will fetch credentials at startup - no manual password management needed!
+# Secret location: terraform output postgres_secret_name
+
 # 2. Create Lex Bot Alias (After Initial Deploy)
 # Get values from terraform output
 BOT_ID=$(terraform output -raw lex_bot_id)
@@ -61,8 +65,64 @@ The EC2 instances will automatically:
 
 - Install Docker and Docker Compose
 - Clone the repository
-- Build and start all containers (Frontend, Backend, Ollama)
+- **Fetch PostgreSQL credentials from AWS Secrets Manager** (secure, no hardcoded passwords!)
+- Build and start all containers (Frontend, Backend, Ollama, PostgreSQL)
 - Pull the LLM model
+
+---
+
+## Secrets Management
+
+PostgreSQL credentials are securely managed using **AWS Secrets Manager**:
+
+### How It Works
+
+1. **Terraform generates** a secure 32-character random password during `terraform apply`
+2. **Credentials are stored** in AWS Secrets Manager at: `{project_name}-{environment}/postgres-credentials`
+3. **EC2 instances fetch** credentials at startup via IAM role (no passwords in code!)
+4. **Credentials are injected** into the `.env` file with secure permissions (chmod 600)
+
+### Viewing the Secret (if needed)
+
+```bash
+# Get secret name from Terraform output
+SECRET_NAME=$(terraform output -raw postgres_secret_name)
+
+# View credentials (for debugging only - avoid in production)
+aws secretsmanager get-secret-value \
+  --secret-id "$SECRET_NAME" \
+  --query 'SecretString' \
+  --output text | jq .
+```
+
+### Local Development with Secrets
+
+For local development, use the provided script to fetch credentials:
+
+```bash
+# From project root
+chmod +x scripts/fetch-secrets.sh
+
+# Fetch credentials and update .env file
+./scripts/fetch-secrets.sh "ai-tutor-dev/postgres-credentials" us-west-2
+
+# Or set environment variables
+export POSTGRES_SECRET_NAME="ai-tutor-dev/postgres-credentials"
+export AWS_REGION="us-west-2"
+./scripts/fetch-secrets.sh
+
+# Then start containers
+docker compose up -d
+```
+
+### Security Best Practices
+
+| ✅ Do                                  | ❌ Don't                                 |
+| -------------------------------------- | ---------------------------------------- |
+| Fetch credentials at runtime           | Hardcode passwords in docker-compose.yml |
+| Use IAM roles for EC2 access           | Store passwords in environment variables |
+| Rotate secrets periodically            | Commit .env files with real credentials  |
+| Use Secrets Manager or Parameter Store | Pass passwords via Terraform user_data   |
 
 ---
 

@@ -31,6 +31,7 @@ resource "aws_launch_template" "backend" {
     lex_bot_id               = var.create_lex_bot ? aws_lexv2models_bot.tutor[0].id : ""
     lex_bot_alias_id         = var.lex_bot_alias_id
     cognito_identity_pool_id = var.create_cognito ? aws_cognito_identity_pool.main[0].id : ""
+    postgres_secret_name     = aws_secretsmanager_secret.postgres.name
   }))
 
   metadata_options {

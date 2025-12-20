@@ -116,6 +116,29 @@ resource "aws_iam_role_policy" "backend_cloudwatch" {
 }
 
 # -----------------------------------------------------------------------------
+# IAM Policy: Secrets Manager Access (for PostgreSQL credentials)
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_role_policy" "backend_secrets" {
+  name = "${var.project_name}-${var.environment}-backend-secrets"
+  role = aws_iam_role.backend.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = aws_secretsmanager_secret.postgres.arn
+      }
+    ]
+  })
+}
+
+# -----------------------------------------------------------------------------
 # IAM Policy: SSM Session Manager Access
 # -----------------------------------------------------------------------------
 

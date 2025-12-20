@@ -14,13 +14,14 @@ echo "Timestamp: $(date)"
 echo "AWS Region: ${aws_region}"
 echo "Environment: ${environment}"
 echo "Ollama Model: ${ollama_model}"
+echo "PostgreSQL Secret: ${postgres_secret_name}"
 
 # -----------------------------------------------------------------------------
 # System Updates and Dependencies
 # -----------------------------------------------------------------------------
 echo "=== Installing system packages ==="
 dnf update -y
-dnf install -y git docker
+dnf install -y git docker jq
 
 # -----------------------------------------------------------------------------
 # Install Docker Compose v2 and Update Buildx
@@ -71,7 +72,45 @@ cd app
 # Create Environment File
 # -----------------------------------------------------------------------------
 echo "=== Creating environment file ==="
-cat > .env << 'ENVFILE'
+
+# Fetch PostgreSQL credentials from AWS Secrets Manager
+echo "=== Fetching PostgreSQL credentials from Secrets Manager ==="
+POSTGRES_SECRET_NAME="${postgres_secret_name}"
+MAX_RETRIES=5
+RETRY_COUNT=0
+
+while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+    SECRET_JSON=$(aws secretsmanager get-secret-value \
+        --secret-id "$POSTGRES_SECRET_NAME" \
+        --region ${aws_region} \
+        --query 'SecretString' \
+        --output text 2>&1)
+
+    if [[ $? -eq 0 ]]; then
+        echo "Successfully retrieved PostgreSQL credentials"
+        break
+    fi
+
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    echo "Retry $RETRY_COUNT/$MAX_RETRIES: Waiting for IAM role to be available..."
+    sleep 10
+done
+
+if [[ $RETRY_COUNT -eq $MAX_RETRIES ]]; then
+    echo "ERROR: Failed to retrieve PostgreSQL credentials after $MAX_RETRIES attempts"
+    echo "Error: $SECRET_JSON"
+    exit 1
+fi
+
+# Parse credentials from JSON
+POSTGRES_USER=$(echo "$SECRET_JSON" | jq -r '.username')
+POSTGRES_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+POSTGRES_DB=$(echo "$SECRET_JSON" | jq -r '.database')
+
+echo "PostgreSQL user: $POSTGRES_USER"
+echo "PostgreSQL database: $POSTGRES_DB"
+
+cat > .env << ENVFILE
 # AWS Configuration
 AWS_REGION=${aws_region}
 S3_BUCKET=${s3_bucket}
@@ -88,14 +127,20 @@ VITE_API_URL=/api
 # Ollama Configuration
 OLLAMA_MODEL=${ollama_model}
 
-# PostgreSQL Configuration
-POSTGRES_DB=aitutor
-POSTGRES_USER=aitutor
-POSTGRES_PASSWORD=aitutor
+# PostgreSQL Configuration (fetched from AWS Secrets Manager)
+# Secret: $POSTGRES_SECRET_NAME
+# Retrieved: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+POSTGRES_DB=$POSTGRES_DB
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 
 # Application Configuration
 LOG_LEVEL=INFO
 ENVFILE
+
+# Secure the .env file
+chmod 600 .env
+echo "Environment file created with credentials from Secrets Manager"
 
 # -----------------------------------------------------------------------------
 # Build and Start Services

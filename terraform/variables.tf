@@ -209,3 +209,19 @@ variable "lex_bot_alias_id" {
   type        = string
   default     = "53YB7VL04U" # Updated 2025-12-20 - prod alias
 }
+
+# -----------------------------------------------------------------------------
+# PostgreSQL Configuration
+# -----------------------------------------------------------------------------
+
+variable "postgres_username" {
+  description = "PostgreSQL username"
+  type        = string
+  default     = "aitutor"
+}
+
+variable "postgres_database" {
+  description = "PostgreSQL database name"
+  type        = string
+  default     = "aitutor"
+}
