@@ -182,6 +182,7 @@ def index():
 
 
 @app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint for load balancers."""
     # Check service dependencies
