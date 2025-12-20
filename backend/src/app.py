@@ -362,7 +362,7 @@ def list_sessions():
 
 @app.route('/api/lesson/<session_id>/<int:lesson_num>', methods=['GET'])
 def get_lesson(session_id, lesson_num):
-    """Get lesson details including transcript."""
+    """Get lesson details including transcript and generation status."""
     session = sessions.get(session_id)
 
     if not session:
@@ -376,6 +376,16 @@ def get_lesson(session_id, lesson_num):
 
     lesson = session.lessons[lesson_num - 1]
 
+    # Determine status
+    if lesson.get('audio_url'):
+        status = 'ready'
+    elif lesson.get('generating'):
+        status = 'generating'
+    elif lesson.get('error'):
+        status = 'error'
+    else:
+        status = 'pending'
+
     return jsonify({
         'session_id': session_id,
         'lesson_number': lesson_num,
@@ -384,20 +394,22 @@ def get_lesson(session_id, lesson_num):
         'script': lesson.get('script'),
         'audio_url': lesson.get('audio_url'),
         'duration_seconds': lesson.get('duration_seconds', 0),
-        'has_audio': lesson.get('audio_url') is not None
+        'has_audio': lesson.get('audio_url') is not None,
+        'status': status,
+        'error': lesson.get('error')
     }), 200
 
 
 @app.route('/api/lesson/<session_id>/<int:lesson_num>/generate', methods=['POST'])
 def generate_lesson_audio(session_id, lesson_num):
     """
-    Generate podcast-style audio for a specific lesson.
+    Generate podcast-style audio for a specific lesson (async).
 
-    This endpoint:
-    1. Generates a two-host dialogue script using Ollama
-    2. Synthesizes multi-voice audio using AWS Polly
-    3. Uploads to S3 and returns the audio URL
+    This endpoint starts audio generation in the background and returns immediately.
+    Use GET /api/lesson/{session_id}/{lesson_num} to check status.
     """
+    import threading
+
     session = sessions.get(session_id)
 
     if not session:
@@ -423,48 +435,65 @@ def generate_lesson_audio(session_id, lesson_num):
         return jsonify({
             'message': 'Audio already generated',
             'audio_url': lesson['audio_url'],
-            'duration_seconds': lesson.get('duration_seconds', 0)
+            'duration_seconds': lesson.get('duration_seconds', 0),
+            'status': 'ready'
         }), 200
 
-    try:
-        # Generate dialogue script
-        logger.info(f"Generating script for session {session_id}, lesson {lesson_num}")
-        script = podcast_generator.generate_episode_script(
-            topic=lesson['topic'],
-            content=session.content['text'],
-            lesson_number=lesson_num,
-            total_lessons=len(session.lessons)
-        )
-
-        lesson['script'] = script
-        logger.info(f"Script generated: {len(script)} dialogue segments")
-
-        # Synthesize audio
-        logger.info(f"Synthesizing audio for session {session_id}, lesson {lesson_num}")
-        audio_result = audio_synthesizer.synthesize_podcast(
-            script=script,
-            session_id=session_id,
-            lesson_num=lesson_num
-        )
-
-        lesson['audio_url'] = audio_result['url']
-        lesson['duration_seconds'] = audio_result['duration_seconds']
-
-        logger.info(f"Audio generated: {audio_result['duration_seconds']}s")
-
+    # Check if already generating
+    if lesson.get('generating'):
         return jsonify({
-            'message': 'Audio generated successfully',
-            'audio_url': audio_result['url'],
-            'duration_seconds': audio_result['duration_seconds'],
-            'transcript': script
-        }), 201
+            'message': 'Audio generation in progress',
+            'status': 'generating'
+        }), 202
 
-    except Exception as e:
-        logger.error(f"Audio generation failed: {e}")
-        return jsonify({
-            'error': 'Failed to generate audio',
-            'detail': str(e)
-        }), 500
+    # Mark as generating
+    lesson['generating'] = True
+
+    def generate_audio_background():
+        """Background task to generate audio."""
+        try:
+            # Generate dialogue script
+            logger.info(f"[Async] Generating script for session {session_id}, lesson {lesson_num}")
+            script = podcast_generator.generate_episode_script(
+                topic=lesson['topic'],
+                content=session.content['text'],
+                lesson_number=lesson_num,
+                total_lessons=len(session.lessons)
+            )
+
+            lesson['script'] = script
+            logger.info(f"[Async] Script generated: {len(script)} dialogue segments")
+
+            # Synthesize audio
+            logger.info(f"[Async] Synthesizing audio for session {session_id}, lesson {lesson_num}")
+            audio_result = audio_synthesizer.synthesize_podcast(
+                script=script,
+                session_id=session_id,
+                lesson_num=lesson_num
+            )
+
+            lesson['audio_url'] = audio_result['url']
+            lesson['duration_seconds'] = audio_result['duration_seconds']
+            lesson['generating'] = False
+
+            logger.info(f"[Async] Audio generated: {audio_result['duration_seconds']}s")
+
+        except Exception as e:
+            logger.error(f"[Async] Audio generation failed: {e}")
+            lesson['generating'] = False
+            lesson['error'] = str(e)
+
+    # Start background thread
+    thread = threading.Thread(target=generate_audio_background)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({
+        'message': f"Started generating audio for lesson {lesson_num}. Check status with GET /api/lesson/{session_id}/{lesson_num}",
+        'status': 'generating',
+        'session_id': session_id,
+        'lesson_number': lesson_num
+    }), 202
 
 
 @app.route('/api/lesson/<session_id>/<int:lesson_num>/audio', methods=['GET'])

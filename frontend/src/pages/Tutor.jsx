@@ -108,56 +108,111 @@ function Tutor({ session, setSession }) {
 
       const data = await response.json()
 
-      // If no audio, generate it
-      if (!data.audio_url) {
-        await generateLessonAudio(lessonNum)
-      } else {
+      // Check status
+      if (data.audio_url) {
+        // Audio ready
         setCurrentLesson({
           title: data.title,
           lesson_number: lessonNum,
           audioUrl: data.audio_url,
           transcript: data.script
         })
+        setLoadingLesson(null)
+      } else if (data.status === 'generating') {
+        // Already generating - start polling
+        pollForAudio(lessonNum)
+      } else {
+        // Need to start generation
+        await generateLessonAudio(lessonNum)
       }
 
     } catch (err) {
       console.error('Error loading lesson:', err)
       setError('Failed to load lesson. Please try again.')
-    } finally {
       setLoadingLesson(null)
     }
   }
 
-  // Generate audio for a lesson
+  // Poll for audio generation completion
+  const pollForAudio = async (lessonNum) => {
+    const maxAttempts = 60 // 2 minutes max (2s intervals)
+    let attempts = 0
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/lesson/${session.sessionId}/${lessonNum}`)
+        if (!response.ok) throw new Error('Failed to check status')
+
+        const data = await response.json()
+
+        if (data.audio_url) {
+          // Audio ready!
+          setCurrentLesson({
+            title: data.title,
+            lesson_number: lessonNum,
+            audioUrl: data.audio_url,
+            transcript: data.script
+          })
+          setLessons(prev => prev.map((l, i) =>
+            i === lessonNum - 1 ? { ...l, has_audio: true } : l
+          ))
+          setLoadingLesson(null)
+          return
+        }
+
+        if (data.status === 'error') {
+          setError(`Audio generation failed: ${data.error || 'Unknown error'}`)
+          setLoadingLesson(null)
+          return
+        }
+
+        // Still generating - continue polling
+        attempts++
+        if (attempts < maxAttempts) {
+          setTimeout(checkStatus, 2000)
+        } else {
+          setError('Audio generation is taking too long. Please try again later.')
+          setLoadingLesson(null)
+        }
+      } catch (err) {
+        console.error('Error polling for audio:', err)
+        setError('Failed to check audio status.')
+        setLoadingLesson(null)
+      }
+    }
+
+    checkStatus()
+  }
+
+  // Generate audio for a lesson (async - returns immediately)
   const generateLessonAudio = async (lessonNum) => {
     try {
-      setLoadingLesson(lessonNum)
-
       const response = await fetch(
         `${API_URL}/api/lesson/${session.sessionId}/${lessonNum}/generate`,
         { method: 'POST' }
       )
 
-      if (!response.ok) throw new Error('Failed to generate audio')
+      if (!response.ok) throw new Error('Failed to start audio generation')
 
       const data = await response.json()
 
-      setCurrentLesson({
-        title: data.title || `Lesson ${lessonNum}`,
-        lesson_number: lessonNum,
-        audioUrl: data.audio_url,
-        transcript: data.transcript
-      })
-
-      // Update lessons list
-      setLessons(prev => prev.map((l, i) =>
-        i === lessonNum - 1 ? { ...l, has_audio: true } : l
-      ))
+      if (data.status === 'ready' && data.audio_url) {
+        // Already had audio
+        setCurrentLesson({
+          title: data.title || `Lesson ${lessonNum}`,
+          lesson_number: lessonNum,
+          audioUrl: data.audio_url,
+          transcript: data.transcript
+        })
+        setLoadingLesson(null)
+      } else {
+        // Started async generation - poll for completion
+        pollForAudio(lessonNum)
+      }
 
     } catch (err) {
       console.error('Error generating audio:', err)
       setError('Failed to generate audio. Please try again.')
-    } finally {
       setLoadingLesson(null)
     }
   }
