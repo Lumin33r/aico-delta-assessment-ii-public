@@ -27,12 +27,21 @@ aws lexv2-models create-bot-alias \
   --bot-alias-locale-settings "{\"en_US\":{\"enabled\":true,\"codeHookSpecification\":{\"lambdaCodeHook\":{\"lambdaARN\":\"$LAMBDA_ARN\",\"codeHookInterfaceVersion\":\"1.0\"}}}}" \
   --region us-west-2
 
-# Note the botAliasId from the output (e.g., "QX1ZJI4KAG")
+# Note the botAliasId from the output (e.g., "53YB7VL04U")
 
-# 3. Update variables.tf with the New Alias ID
-# Edit terraform/variables.tf and set:
-#   default = "<your-new-alias-id>"
-# in the lex_bot_alias_id variable block
+# 3. Update variables.tf with the New Alias ID and Push to Git
+# Extract alias ID and update variables.tf
+ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $BOT_ID --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text --region us-west-2)
+echo "New Alias ID: $ALIAS_ID"
+
+# Update the default value in variables.tf
+sed -i "s/default.*=.*\"[A-Z0-9]*\".*# .*alias/default     = \"$ALIAS_ID\" # Updated $(date +%Y-%m-%d) - prod alias/" variables.tf
+
+# Commit and push (CRITICAL: EC2 instances pull from git)
+cd .. && git add terraform/variables.tf
+git commit -m "Update Lex bot alias ID to $ALIAS_ID"
+git push
+cd terraform
 
 # 4. Re-apply Terraform and Refresh Instances
 terraform apply -auto-approve
@@ -370,14 +379,40 @@ aws lexv2-models create-bot-alias \
 
 **Step 3: Update variables.tf with the New Alias ID**
 
-Edit `terraform/variables.tf` and update the `lex_bot_alias_id` variable:
+Update `terraform/variables.tf` with the new alias ID:
+
+```bash
+# Get the alias ID from the prod alias
+ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $(terraform output -raw lex_bot_id) \
+  --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text --region us-west-2)
+echo "Alias ID: $ALIAS_ID"
+
+# Update variables.tf using sed
+sed -i "s/default.*=.*\"[A-Z0-9]*\".*# .*alias/default     = \"$ALIAS_ID\" # Updated $(date +%Y-%m-%d) - prod alias/" variables.tf
+
+# Verify the change
+grep "lex_bot_alias_id" -A3 variables.tf
+```
+
+The variable should now look like:
 
 ```hcl
 variable "lex_bot_alias_id" {
   description = "Lex Bot Alias ID (created manually after initial deploy)"
   type        = string
-  default     = "QX1ZJI4KAG"  # <-- Replace with your botAliasId from Step 2
+  default     = "53YB7VL04U" # Updated 2025-12-20 - prod alias
 }
+```
+
+**Step 3b: Commit and Push to Git (CRITICAL)**
+
+> ⚠️ **IMPORTANT**: EC2 instances clone the repository from git during deployment. If you don't push the updated alias ID, new instances will use the old/placeholder value!
+
+```bash
+cd /path/to/aico-delta-assessment-ii
+git add terraform/variables.tf
+git commit -m "Update Lex bot alias ID to $ALIAS_ID"
+git push
 ```
 
 **Step 4: Re-apply Terraform and Trigger Instance Refresh**
@@ -1775,10 +1810,10 @@ PostgreSQL runs as a Docker container alongside the application. Verification mu
 
 **Via API Health Endpoint (External):**
 
-| Check              | Command                                                                                               | Expected Result                      |
-| ------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| Database healthy   | `curl -s http://$(terraform output -raw alb_dns_name)/api/health \| jq '.services.database'`          | `"healthy"`                          |
-| Full health check  | `curl -s http://$(terraform output -raw alb_dns_name)/api/health \| jq '.services'`                   | All services `"healthy"`             |
+| Check             | Command                                                                                      | Expected Result          |
+| ----------------- | -------------------------------------------------------------------------------------------- | ------------------------ |
+| Database healthy  | `curl -s http://$(terraform output -raw alb_dns_name)/api/health \| jq '.services.database'` | `"healthy"`              |
+| Full health check | `curl -s http://$(terraform output -raw alb_dns_name)/api/health \| jq '.services'`          | All services `"healthy"` |
 
 **Via SSM Session (On EC2):**
 
@@ -1801,12 +1836,12 @@ sudo docker compose exec postgres psql -U postgres -d ai_tutor -c "\dt"
 sudo docker compose exec postgres psql -U postgres -d ai_tutor -c "SELECT COUNT(*) FROM podcasts;"
 ```
 
-| Check (On EC2)      | Command                                                                               | Expected Result            |
-| ------------------- | ------------------------------------------------------------------------------------- | -------------------------- |
-| Container running   | `cd /opt/ai-tutor/app && sudo docker compose ps postgres`                             | `postgres` status `Up`     |
-| Database ready      | `sudo docker compose exec postgres pg_isready -U postgres`                            | `/var/run/postgresql:5432` |
-| Tables exist        | `sudo docker compose exec postgres psql -U postgres -d ai_tutor -c "\dt"`             | `podcasts` table listed    |
-| Container healthy   | `sudo docker inspect ai-tutor-postgres-1 --format '{{.State.Health.Status}}'`         | `healthy`                  |
+| Check (On EC2)    | Command                                                                       | Expected Result            |
+| ----------------- | ----------------------------------------------------------------------------- | -------------------------- |
+| Container running | `cd /opt/ai-tutor/app && sudo docker compose ps postgres`                     | `postgres` status `Up`     |
+| Database ready    | `sudo docker compose exec postgres pg_isready -U postgres`                    | `/var/run/postgresql:5432` |
+| Tables exist      | `sudo docker compose exec postgres psql -U postgres -d ai_tutor -c "\dt"`     | `podcasts` table listed    |
+| Container healthy | `sudo docker inspect ai-tutor-postgres-1 --format '{{.State.Health.Status}}'` | `healthy`                  |
 
 ---
 
