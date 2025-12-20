@@ -30,7 +30,7 @@ check() {
     local name=$1
     local result=$2
     local expected=$3
-    
+
     if [[ "$result" == *"$expected"* ]] || [[ "$result" == "$expected" ]]; then
         echo -e "${GREEN}✓${NC} $name: $result"
         return 0
@@ -44,7 +44,7 @@ check() {
 check_not_empty() {
     local name=$1
     local result=$2
-    
+
     if [[ -n "$result" ]] && [[ "$result" != "null" ]] && [[ "$result" != "None" ]]; then
         echo -e "${GREEN}✓${NC} $name: $result"
         return 0
@@ -177,7 +177,27 @@ else
 fi
 
 echo ""
-echo "=== 10. CLOUDWATCH LOGS ==="
+echo "=== 10. POSTGRESQL DATABASE (Docker) ==="
+# PostgreSQL runs inside Docker on EC2, check via API database health endpoint
+DB_STATUS=$(echo "$API_HEALTH" | jq -r '.services.database // "unknown"' 2>/dev/null || echo "unknown")
+if [[ "$DB_STATUS" == "healthy" ]]; then
+    echo -e "${GREEN}✓${NC} PostgreSQL: $DB_STATUS"
+elif [[ "$DB_STATUS" == "unknown" ]]; then
+    warn "PostgreSQL: Status not in health endpoint (check container directly)"
+else
+    echo -e "${RED}✗${NC} PostgreSQL: $DB_STATUS"
+fi
+
+# Check if we can reach the first running instance to verify containers
+if [[ -n "$INSTANCE_IDS" ]]; then
+    FIRST_INSTANCE=$(echo "$INSTANCE_IDS" | awk '{print $1}')
+    echo "   To verify PostgreSQL container on EC2:"
+    echo "   aws ssm start-session --target $FIRST_INSTANCE"
+    echo "   Then run: cd /opt/ai-tutor/app && sudo docker compose ps postgres"
+fi
+
+echo ""
+echo "=== 11. CLOUDWATCH LOGS ==="
 LAMBDA_LOG_GROUP="/aws/lambda/$LAMBDA"
 LOG_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "$LAMBDA_LOG_GROUP" --query 'logGroups[0].logGroupName' --output text 2>/dev/null || echo "")
 check_not_empty "Lambda Log Group" "$LOG_EXISTS"
@@ -191,8 +211,17 @@ echo "ALB URL: http://$ALB_DNS"
 echo "API Health: http://$ALB_DNS/api/health"
 echo "Region: $REGION"
 echo ""
+echo "Docker Containers on EC2:"
+echo "  - frontend (nginx:80)"
+echo "  - backend (flask:8000)"
+echo "  - ollama (llm:11434)"
+echo "  - postgres (db:5432)"
+echo ""
 echo "To connect to EC2 instance:"
-echo "  aws ssm start-session --target $INSTANCE_IDS"
+echo "  aws ssm start-session --target $FIRST_INSTANCE"
+echo ""
+echo "To check all containers:"
+echo "  cd /opt/ai-tutor/app && sudo docker compose ps"
 echo ""
 echo "To view Lambda logs:"
 echo "  aws logs tail $LAMBDA_LOG_GROUP --follow"
