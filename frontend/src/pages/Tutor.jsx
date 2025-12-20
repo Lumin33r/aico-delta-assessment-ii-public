@@ -135,7 +135,7 @@ function Tutor({ session, setSession }) {
 
   // Poll for audio generation completion
   const pollForAudio = async (lessonNum) => {
-    const maxAttempts = 60 // 2 minutes max (2s intervals)
+    const maxAttempts = 150 // 5 minutes max (2s intervals) - Ollama can take 3+ minutes
     let attempts = 0
 
     const checkStatus = async () => {
