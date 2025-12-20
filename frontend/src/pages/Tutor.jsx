@@ -20,13 +20,27 @@ function Tutor({ session, setSession }) {
   const [currentLesson, setCurrentLesson] = useState(null)
   const [loadingLesson, setLoadingLesson] = useState(null)
   const [error, setError] = useState(null)
+  const [isPolling, setIsPolling] = useState(false)
 
-  // Fetch session data when session changes
+  // Fetch session data when session changes, with polling for processing sessions
   useEffect(() => {
     if (session?.sessionId) {
       fetchSession(session.sessionId)
     }
   }, [session?.sessionId])
+
+  // Polling effect - fetch until lessons are ready
+  useEffect(() => {
+    let pollInterval
+    if (isPolling && session?.sessionId) {
+      pollInterval = setInterval(() => {
+        fetchSession(session.sessionId)
+      }, 3000) // Poll every 3 seconds
+    }
+    return () => {
+      if (pollInterval) clearInterval(pollInterval)
+    }
+  }, [isPolling, session?.sessionId])
 
   // Fetch session details from API
   const fetchSession = async (sessionId) => {
@@ -37,6 +51,14 @@ function Tutor({ session, setSession }) {
       const data = await response.json()
       setLessons(data.lessons || [])
       setError(null)
+
+      // Stop polling if lessons are ready or status is 'ready'/'error'
+      if (data.lessons?.length > 0 || data.status === 'ready' || data.status === 'error') {
+        setIsPolling(false)
+      } else if (data.status === 'processing' || data.status === 'extracting' || data.status === 'planning') {
+        // Keep polling if still processing
+        setIsPolling(true)
+      }
     } catch (err) {
       console.error('Error fetching session:', err)
       // Don't set error - session might not exist yet
@@ -46,6 +68,9 @@ function Tutor({ session, setSession }) {
   // Handle session creation from Lex
   const handleSessionCreated = (newSession) => {
     setSession(newSession)
+    // Start polling for lessons - they may still be processing
+    setIsPolling(true)
+    // Set initial lessons if provided
     setLessons(newSession.lessons?.map((title, i) => ({
       title,
       lesson_number: i + 1,
