@@ -121,8 +121,9 @@ VITE_LEX_BOT_ALIAS_ID=${lex_bot_alias_id}
 VITE_AWS_REGION=${aws_region}
 VITE_COGNITO_IDENTITY_POOL_ID=${cognito_identity_pool_id}
 
-# API Configuration (nginx proxies /api to backend)
-VITE_API_URL=/api
+# API Configuration
+# Leave empty - frontend code already includes /api prefix in fetch paths
+VITE_API_URL=
 
 # Ollama Configuration
 OLLAMA_MODEL=${ollama_model}
