@@ -207,5 +207,5 @@ variable "git_repo_url" {
 variable "lex_bot_alias_id" {
   description = "Lex Bot Alias ID (created manually after initial deploy)"
   type        = string
-  default     = "QX1ZJI4KAG" # Updated 2025-12-18
+  default     = "53YB7VL04U" # Updated 2025-12-20 - prod alias
 }
