@@ -762,6 +762,180 @@ def lex_start_lesson():
         }), 500
 
 
+@app.route('/api/lex/progress', methods=['POST'])
+def lex_progress():
+    """
+    Get learning progress for a session.
+    Called by Lex when user asks about their progress.
+    """
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'message': "You haven't started any lessons yet. Share a URL to get started!"
+            }), 400
+
+        session = sessions.get(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'message': "I couldn't find that session. Share a new URL to create lessons!"
+            }), 404
+
+        if session.status != 'ready':
+            return jsonify({
+                'success': True,
+                'message': f"Your lessons are still being prepared (status: {session.status}). Check back in a moment!"
+            }), 200
+
+        # Count completed lessons (those with audio generated)
+        total_lessons = len(session.lessons)
+        completed_lessons = sum(1 for l in session.lessons if l.get('audio_url'))
+        
+        lesson_titles = [l['title'] for l in session.lessons]
+        
+        if completed_lessons == 0:
+            message = f"You have {total_lessons} lessons ready: {', '.join(lesson_titles)}. Say 'start lesson 1' to begin!"
+        elif completed_lessons < total_lessons:
+            message = f"You've listened to {completed_lessons} of {total_lessons} lessons. Ready for lesson {completed_lessons + 1}?"
+        else:
+            message = f"Congratulations! You've completed all {total_lessons} lessons. Want to review any of them?"
+
+        return jsonify({
+            'success': True,
+            'message': message,
+            'total_lessons': total_lessons,
+            'completed_lessons': completed_lessons,
+            'lessons': lesson_titles
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Lex progress failed: {e}")
+        return jsonify({
+            'success': False,
+            'message': f"I couldn't get your progress: {str(e)}"
+        }), 500
+
+
+@app.route('/api/lex/next-lesson', methods=['POST'])
+def lex_next_lesson():
+    """
+    Get the next lesson in the sequence.
+    Called by Lex when user wants to continue.
+    """
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        current_lesson = data.get('current_lesson', 0)
+
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'message': "You haven't started any lessons yet. Share a URL to get started!"
+            }), 400
+
+        session = sessions.get(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'message': "I couldn't find that session. Share a new URL to create lessons!"
+            }), 404
+
+        if session.status != 'ready':
+            return jsonify({
+                'success': False,
+                'message': f"Your lessons are still being prepared. Check back in a moment!"
+            }), 200
+
+        next_lesson_num = current_lesson + 1
+        if next_lesson_num > len(session.lessons):
+            return jsonify({
+                'success': True,
+                'message': "You've completed all the lessons! Great job! Would you like to review any of them?",
+                'completed': True
+            }), 200
+
+        lesson = session.lessons[next_lesson_num - 1]
+        return jsonify({
+            'success': True,
+            'message': f"Up next: Lesson {next_lesson_num} - {lesson['title']}. Say 'start lesson {next_lesson_num}' when you're ready!",
+            'next_lesson': next_lesson_num,
+            'title': lesson['title'],
+            'has_audio': bool(lesson.get('audio_url'))
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Lex next-lesson failed: {e}")
+        return jsonify({
+            'success': False,
+            'message': f"Something went wrong: {str(e)}"
+        }), 500
+
+
+@app.route('/api/lex/repeat-lesson', methods=['POST'])
+def lex_repeat_lesson():
+    """
+    Repeat the current or specified lesson.
+    Called by Lex when user wants to hear a lesson again.
+    """
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        lesson_num = data.get('lesson_number', 1)
+
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'message': "You haven't started any lessons yet. Share a URL to get started!"
+            }), 400
+
+        session = sessions.get(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'message': "I couldn't find that session. Share a new URL to create lessons!"
+            }), 404
+
+        if session.status != 'ready':
+            return jsonify({
+                'success': False,
+                'message': f"Your lessons are still being prepared. Check back in a moment!"
+            }), 200
+
+        if lesson_num < 1 or lesson_num > len(session.lessons):
+            return jsonify({
+                'success': False,
+                'message': f"I only have {len(session.lessons)} lessons. Which one would you like to repeat?"
+            }), 400
+
+        lesson = session.lessons[lesson_num - 1]
+        
+        if lesson.get('audio_url'):
+            return jsonify({
+                'success': True,
+                'message': f"Playing lesson {lesson_num} - {lesson['title']} again!",
+                'audio_url': lesson['audio_url'],
+                'has_audio': True
+            }), 200
+        else:
+            return jsonify({
+                'success': True,
+                'message': f"Let me prepare lesson {lesson_num} - {lesson['title']} for you. One moment...",
+                'needs_generation': True,
+                'lesson_number': lesson_num
+            }), 202
+
+    except Exception as e:
+        logger.error(f"Lex repeat-lesson failed: {e}")
+        return jsonify({
+            'success': False,
+            'message': f"Something went wrong: {str(e)}"
+        }), 500
+
+
 # =============================================================================
 # Admin & Stats Endpoints
 # =============================================================================
