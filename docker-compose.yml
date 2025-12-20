@@ -45,8 +45,12 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:1b}
       - FLASK_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-aitutor}:${POSTGRES_PASSWORD:-aitutor}@postgres:5432/${POSTGRES_DB:-aitutor}
     depends_on:
-      - ollama
+      ollama:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -76,6 +80,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - ai-tutor-network
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-tutor-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aitutor}
+      POSTGRES_USER: ${POSTGRES_USER:-aitutor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aitutor}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/init-db:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-aitutor}", "-d", "${POSTGRES_DB:-aitutor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
     networks:
       - ai-tutor-network
 
@@ -114,3 +142,5 @@ networks:
 volumes:
   ollama-data:
     name: ai-tutor-ollama-data
+  pgdata:
+    name: ai-tutor-pgdata

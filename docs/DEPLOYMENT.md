@@ -1544,3 +1544,316 @@ aws logs tail /aws/lambda/$(terraform output -raw lambda_function_name) --follow
 | **Total (minimum)**        | **~$60/month**          |
 
 > **Note:** Costs increase with more instances, higher traffic, and more audio storage. Use AWS Cost Explorer for accurate tracking.
+
+---
+
+## Appendix: Infrastructure Verification Commands
+
+A comprehensive checklist of commands to verify all components of the AI Personal Tutor infrastructure are deployed and functioning correctly.
+
+### Prerequisites
+
+```bash
+# Navigate to terraform directory
+cd /path/to/aico-delta-assessment-ii/terraform
+
+# Ensure you're authenticated to AWS
+aws sts get-caller-identity
+```
+
+---
+
+### 1. VPC & Networking
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| VPC exists | `aws ec2 describe-vpcs --vpc-ids $(terraform output -raw vpc_id) --query 'Vpcs[0].State'` | `"available"` |
+| Public subnets | `aws ec2 describe-subnets --subnet-ids $(terraform output -json public_subnet_ids \| jq -r '.[]') --query 'Subnets[*].{AZ:AvailabilityZone,State:State}'` | All `"available"` |
+| Private subnets | `aws ec2 describe-subnets --subnet-ids $(terraform output -json private_subnet_ids \| jq -r '.[]') --query 'Subnets[*].{AZ:AvailabilityZone,State:State}'` | All `"available"` |
+| Internet Gateway | `aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$(terraform output -raw vpc_id)" --query 'InternetGateways[0].Attachments[0].State'` | `"available"` |
+| NAT Gateway (if used) | `aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$(terraform output -raw vpc_id)" --query 'NatGateways[*].State'` | `"available"` |
+
+```bash
+# Full VPC verification script
+echo "=== VPC Verification ===" && \
+aws ec2 describe-vpcs --vpc-ids $(terraform output -raw vpc_id) \
+  --query 'Vpcs[0].{VpcId:VpcId,State:State,CidrBlock:CidrBlock}' --output table
+```
+
+---
+
+### 2. Security Groups
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Backend SG exists | `aws ec2 describe-security-groups --group-ids $(terraform output -raw backend_security_group_id) --query 'SecurityGroups[0].GroupId'` | Security Group ID |
+| ALB SG rules | `aws ec2 describe-security-groups --filters "Name=group-name,Values=*alb*" --query 'SecurityGroups[0].IpPermissions[*].{Port:FromPort,Protocol:IpProtocol}'` | Port 80/443 allowed |
+
+```bash
+# List all project security groups
+aws ec2 describe-security-groups \
+  --filters "Name=vpc-id,Values=$(terraform output -raw vpc_id)" \
+  --query 'SecurityGroups[*].{Name:GroupName,ID:GroupId,Description:Description}' \
+  --output table
+```
+
+---
+
+### 3. Application Load Balancer (ALB)
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| ALB exists | `aws elbv2 describe-load-balancers --names "*ai-tutor*" --query 'LoadBalancers[0].State.Code'` | `"active"` |
+| ALB DNS resolves | `nslookup $(terraform output -raw alb_dns_name)` | IP addresses returned |
+| Target group healthy | `aws elbv2 describe-target-health --target-group-arn $(aws elbv2 describe-target-groups --names "*ai-tutor*" --query 'TargetGroups[0].TargetGroupArn' --output text) --query 'TargetHealthDescriptions[*].TargetHealth.State'` | `"healthy"` |
+| HTTP response | `curl -s -o /dev/null -w "%{http_code}" http://$(terraform output -raw alb_dns_name)/` | `200` |
+
+```bash
+# Full ALB health check
+ALB_DNS=$(terraform output -raw alb_dns_name)
+echo "=== ALB Health Check ===" && \
+echo "DNS: $ALB_DNS" && \
+echo "HTTP Status: $(curl -s -o /dev/null -w '%{http_code}' http://$ALB_DNS/)" && \
+echo "API Health: $(curl -s http://$ALB_DNS/api/health | jq -r '.status // .error // "no response"')"
+```
+
+---
+
+### 4. EC2 / Auto Scaling Group
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| ASG exists | `aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $(terraform output -raw backend_asg_name) --query 'AutoScalingGroups[0].AutoScalingGroupName'` | ASG name |
+| Desired capacity | `aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $(terraform output -raw backend_asg_name) --query 'AutoScalingGroups[0].{Desired:DesiredCapacity,Min:MinSize,Max:MaxSize}'` | Capacity numbers |
+| Instance state | `aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $(terraform output -raw backend_asg_name) --query 'AutoScalingGroups[0].Instances[*].{Id:InstanceId,Health:HealthStatus,State:LifecycleState}'` | `"Healthy"`, `"InService"` |
+| Instance running | `aws ec2 describe-instances --filters "Name=tag:aws:autoscaling:groupName,Values=$(terraform output -raw backend_asg_name)" "Name=instance-state-name,Values=running" --query 'Reservations[*].Instances[*].{ID:InstanceId,State:State.Name,IP:PublicIpAddress}'` | Running instances |
+
+```bash
+# Full ASG verification
+ASG_NAME=$(terraform output -raw backend_asg_name)
+echo "=== Auto Scaling Group: $ASG_NAME ===" && \
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $ASG_NAME \
+  --query 'AutoScalingGroups[0].{Name:AutoScalingGroupName,Desired:DesiredCapacity,Running:length(Instances[?LifecycleState==`InService`]),Healthy:length(Instances[?HealthStatus==`Healthy`])}' \
+  --output table
+```
+
+---
+
+### 5. S3 Bucket
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Bucket exists | `aws s3api head-bucket --bucket $(terraform output -raw audio_bucket_name) 2>&1 && echo "Exists"` | `"Exists"` |
+| Bucket accessible | `aws s3 ls s3://$(terraform output -raw audio_bucket_name)/ --summarize` | No errors |
+| CORS configured | `aws s3api get-bucket-cors --bucket $(terraform output -raw audio_bucket_name) --query 'CORSRules[0].AllowedMethods'` | `["GET", "HEAD"]` |
+| Lifecycle rules | `aws s3api get-bucket-lifecycle-configuration --bucket $(terraform output -raw audio_bucket_name) --query 'Rules[*].{ID:ID,Status:Status}'` | Rules listed |
+
+```bash
+# Full S3 verification
+BUCKET=$(terraform output -raw audio_bucket_name)
+echo "=== S3 Bucket: $BUCKET ===" && \
+aws s3api head-bucket --bucket $BUCKET 2>&1 && echo "✓ Bucket exists" && \
+aws s3 ls s3://$BUCKET/ --summarize 2>/dev/null | tail -2
+```
+
+---
+
+### 6. Lambda Function
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Function exists | `aws lambda get-function --function-name $(terraform output -raw lambda_function_name) --query 'Configuration.State'` | `"Active"` |
+| Runtime | `aws lambda get-function --function-name $(terraform output -raw lambda_function_name) --query 'Configuration.Runtime'` | `"python3.11"` |
+| Memory/Timeout | `aws lambda get-function --function-name $(terraform output -raw lambda_function_name) --query 'Configuration.{Memory:MemorySize,Timeout:Timeout}'` | Config values |
+| Recent invocations | `aws logs filter-log-events --log-group-name /aws/lambda/$(terraform output -raw lambda_function_name) --limit 5 --query 'events[*].message' 2>/dev/null \| head -20` | Log entries |
+| Invoke test | `aws lambda invoke --function-name $(terraform output -raw lambda_function_name) --payload '{"test": true}' /tmp/lambda-response.json && cat /tmp/lambda-response.json` | Response JSON |
+
+```bash
+# Full Lambda verification
+LAMBDA=$(terraform output -raw lambda_function_name)
+echo "=== Lambda Function: $LAMBDA ===" && \
+aws lambda get-function --function-name $LAMBDA \
+  --query 'Configuration.{Name:FunctionName,State:State,Runtime:Runtime,Memory:MemorySize,Timeout:Timeout}' \
+  --output table
+```
+
+---
+
+### 7. Amazon Lex Bot
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Bot exists | `aws lexv2-models describe-bot --bot-id $(terraform output -raw lex_bot_id) --query 'botStatus'` | `"Available"` |
+| Bot version | `aws lexv2-models describe-bot-version --bot-id $(terraform output -raw lex_bot_id) --bot-version $(terraform output -raw lex_bot_version) --query 'botStatus'` | `"Available"` |
+| Bot alias exists | `aws lexv2-models list-bot-aliases --bot-id $(terraform output -raw lex_bot_id) --query 'botAliasSummaries[*].{Name:botAliasName,ID:botAliasId,Status:botAliasStatus}'` | Alias with `"Available"` |
+| Intents configured | `aws lexv2-models list-intents --bot-id $(terraform output -raw lex_bot_id) --bot-version $(terraform output -raw lex_bot_version) --locale-id en_US --query 'intentSummaries[*].intentName'` | Intent names |
+
+```bash
+# Full Lex verification
+BOT_ID=$(terraform output -raw lex_bot_id)
+echo "=== Lex Bot: $BOT_ID ===" && \
+aws lexv2-models describe-bot --bot-id $BOT_ID \
+  --query '{Name:botName,Status:botStatus,Version:botVersion}' --output table && \
+echo "--- Aliases ---" && \
+aws lexv2-models list-bot-aliases --bot-id $BOT_ID \
+  --query 'botAliasSummaries[*].{Name:botAliasName,ID:botAliasId,Status:botAliasStatus}' --output table
+```
+
+---
+
+### 8. Cognito Identity Pool
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Pool exists | `aws cognito-identity describe-identity-pool --identity-pool-id $(terraform output -raw cognito_identity_pool_id) --query 'IdentityPoolName'` | Pool name |
+| Unauthenticated enabled | `aws cognito-identity describe-identity-pool --identity-pool-id $(terraform output -raw cognito_identity_pool_id) --query 'AllowUnauthenticatedIdentities'` | `true` |
+| Roles attached | `aws cognito-identity get-identity-pool-roles --identity-pool-id $(terraform output -raw cognito_identity_pool_id) --query 'Roles'` | Role ARNs |
+
+```bash
+# Full Cognito verification
+POOL_ID=$(terraform output -raw cognito_identity_pool_id)
+echo "=== Cognito Identity Pool: $POOL_ID ===" && \
+aws cognito-identity describe-identity-pool --identity-pool-id $POOL_ID \
+  --query '{Name:IdentityPoolName,AllowUnauth:AllowUnauthenticatedIdentities}' --output table
+```
+
+---
+
+### 9. IAM Roles & Policies
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| EC2 instance role | `aws iam get-role --role-name "*ai-tutor*backend*" --query 'Role.{Name:RoleName,Arn:Arn}' 2>/dev/null \|\| aws iam list-roles --query 'Roles[?contains(RoleName,\`ai-tutor\`)].RoleName'` | Role exists |
+| Lambda execution role | `aws lambda get-function --function-name $(terraform output -raw lambda_function_name) --query 'Configuration.Role'` | Role ARN |
+| Cognito unauth role | `aws cognito-identity get-identity-pool-roles --identity-pool-id $(terraform output -raw cognito_identity_pool_id) --query 'Roles.unauthenticated'` | Role ARN |
+
+```bash
+# List all project IAM roles
+echo "=== IAM Roles ===" && \
+aws iam list-roles --query 'Roles[?contains(RoleName,`ai-tutor`) || contains(RoleName,`Troy`)].{Name:RoleName,Created:CreateDate}' --output table
+```
+
+---
+
+### 10. Docker Containers (On EC2)
+
+These commands must be run **on the EC2 instance** via SSM Session Manager:
+
+```bash
+# Connect to EC2 via SSM
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:aws:autoscaling:groupName,Values=$(terraform output -raw backend_asg_name)" \
+            "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].InstanceId' --output text)
+
+aws ssm start-session --target $INSTANCE_ID
+```
+
+| Check | Command (on EC2) | Expected Result |
+|-------|------------------|-----------------|
+| Docker running | `sudo systemctl is-active docker` | `active` |
+| Containers running | `cd /opt/ai-tutor/app && sudo docker compose ps` | All containers `Up` |
+| Backend healthy | `curl -s localhost:8000/health \| jq` | `{"status": "healthy"}` |
+| Ollama responding | `curl -s localhost:11434/api/tags \| jq '.models[0].name'` | Model name |
+| Frontend accessible | `curl -s -o /dev/null -w "%{http_code}" localhost:80/` | `200` |
+| Container logs | `cd /opt/ai-tutor/app && sudo docker compose logs --tail=20` | Recent logs |
+
+```bash
+# Full container health check (run on EC2)
+cd /opt/ai-tutor/app && \
+echo "=== Container Status ===" && sudo docker compose ps && \
+echo -e "\n=== Backend Health ===" && curl -s localhost:8000/health | jq && \
+echo -e "\n=== Ollama Status ===" && curl -s localhost:11434/api/tags | jq '.models[0].name // "no model"' && \
+echo -e "\n=== Disk Usage ===" && df -h / | tail -1
+```
+
+---
+
+### 11. End-to-End Application Tests
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Frontend loads | `curl -s http://$(terraform output -raw alb_dns_name)/ \| grep -o "<title>.*</title>"` | App title |
+| API health | `curl -s http://$(terraform output -raw alb_dns_name)/api/health \| jq '.status'` | `"healthy"` |
+| Create session | `curl -s -X POST http://$(terraform output -raw alb_dns_name)/api/v2/sessions -H "Content-Type: application/json" -d '{"url":"https://en.wikipedia.org/wiki/Python_(programming_language)"}' \| jq '.session_id // .error'` | Session ID or error |
+| Ollama health | `curl -s http://$(terraform output -raw alb_dns_name)/api/health \| jq '.services.ollama'` | `"healthy"` |
+
+```bash
+# Full end-to-end test
+ALB=$(terraform output -raw alb_dns_name)
+echo "=== End-to-End Tests ===" && \
+echo "1. Frontend: $(curl -s -o /dev/null -w '%{http_code}' http://$ALB/)" && \
+echo "2. API Health: $(curl -s http://$ALB/api/health | jq -r '.status // "error"')" && \
+echo "3. Ollama: $(curl -s http://$ALB/api/health | jq -r '.services.ollama // "unknown"')" && \
+echo "4. Create Session Test:" && \
+curl -s -X POST "http://$ALB/api/v2/sessions" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}' | jq '{session_id,status,error}'
+```
+
+---
+
+### 12. CloudWatch Logs
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| Lambda logs exist | `aws logs describe-log-groups --log-group-name-prefix /aws/lambda/$(terraform output -raw lambda_function_name) --query 'logGroups[0].logGroupName'` | Log group name |
+| Recent Lambda logs | `aws logs tail /aws/lambda/$(terraform output -raw lambda_function_name) --since 1h 2>/dev/null \| head -20` | Log entries |
+| Backend logs | `aws logs tail /ai-tutor/backend --since 1h 2>/dev/null \| head -20` | Log entries |
+
+```bash
+# View recent logs
+LAMBDA=$(terraform output -raw lambda_function_name)
+echo "=== Recent Lambda Logs ===" && \
+aws logs tail /aws/lambda/$LAMBDA --since 30m --format short 2>/dev/null | head -30
+```
+
+---
+
+### Quick Full Verification Script
+
+Run this script to verify all major components at once:
+
+```bash
+#!/bin/bash
+# Full Infrastructure Verification Script
+# Run from terraform directory
+
+set -e
+cd "$(dirname "$0")"
+
+echo "========================================"
+echo "AI Personal Tutor - Infrastructure Check"
+echo "========================================"
+echo ""
+
+# Get outputs
+ALB_DNS=$(terraform output -raw alb_dns_name 2>/dev/null)
+ASG_NAME=$(terraform output -raw backend_asg_name 2>/dev/null)
+BUCKET=$(terraform output -raw audio_bucket_name 2>/dev/null)
+LAMBDA=$(terraform output -raw lambda_function_name 2>/dev/null)
+LEX_BOT=$(terraform output -raw lex_bot_id 2>/dev/null)
+COGNITO=$(terraform output -raw cognito_identity_pool_id 2>/dev/null)
+VPC_ID=$(terraform output -raw vpc_id 2>/dev/null)
+
+echo "1. VPC: $(aws ec2 describe-vpcs --vpc-ids $VPC_ID --query 'Vpcs[0].State' --output text 2>/dev/null || echo 'ERROR')"
+echo "2. ALB: $(curl -s -o /dev/null -w '%{http_code}' http://$ALB_DNS/ 2>/dev/null || echo 'ERROR')"
+echo "3. ASG: $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $ASG_NAME --query 'AutoScalingGroups[0].Instances | length(@)' --output text 2>/dev/null || echo 'ERROR') instances"
+echo "4. S3:  $(aws s3api head-bucket --bucket $BUCKET 2>&1 && echo 'OK' || echo 'ERROR')"
+echo "5. Lambda: $(aws lambda get-function --function-name $LAMBDA --query 'Configuration.State' --output text 2>/dev/null || echo 'ERROR')"
+echo "6. Lex: $(aws lexv2-models describe-bot --bot-id $LEX_BOT --query 'botStatus' --output text 2>/dev/null || echo 'ERROR')"
+echo "7. Cognito: $(aws cognito-identity describe-identity-pool --identity-pool-id $COGNITO --query 'IdentityPoolName' --output text 2>/dev/null || echo 'ERROR')"
+echo "8. API Health: $(curl -s http://$ALB_DNS/api/health | jq -r '.status // "ERROR"' 2>/dev/null || echo 'ERROR')"
+
+echo ""
+echo "========================================"
+echo "Verification Complete"
+echo "========================================"
+```
+
+Save this script as `verify-infrastructure.sh` in the terraform directory and run with:
+
+```bash
+chmod +x verify-infrastructure.sh && ./verify-infrastructure.sh
+```
+

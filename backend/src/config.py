@@ -36,6 +36,10 @@ class Config:
     ALEX_VOICE: str = os.getenv('ALEX_VOICE', 'Matthew')
     SAM_VOICE: str = os.getenv('SAM_VOICE', 'Joanna')
 
+    # Database configuration
+    DATABASE_URL: str = os.getenv('DATABASE_URL', '')
+    USE_DATABASE: bool = bool(os.getenv('DATABASE_URL', ''))
+
     # Session storage (future Redis support)
     REDIS_URL: str = os.getenv('REDIS_URL', '')
     USE_REDIS: bool = bool(os.getenv('USE_REDIS', ''))

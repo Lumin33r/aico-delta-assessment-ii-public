@@ -88,6 +88,11 @@ VITE_API_URL=/api
 # Ollama Configuration
 OLLAMA_MODEL=${ollama_model}
 
+# PostgreSQL Configuration
+POSTGRES_DB=aitutor
+POSTGRES_USER=aitutor
+POSTGRES_PASSWORD=aitutor
+
 # Application Configuration
 LOG_LEVEL=INFO
 ENVFILE
@@ -174,6 +179,10 @@ fi
 if ! curl -sf http://localhost:80/api/health > /dev/null; then
     echo "UNHEALTHY: Backend not responding"
     exit 1
+fi
+# Check PostgreSQL
+if ! docker compose -f /opt/ai-tutor/app/docker-compose.yml exec -T postgres pg_isready -U aitutor > /dev/null 2>&1; then
+    echo "WARNING: PostgreSQL not responding (non-critical)"
 fi
 echo "HEALTHY: All services running"
 exit 0
