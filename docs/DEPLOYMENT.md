@@ -71,6 +71,33 @@ The EC2 instances will automatically:
 
 ---
 
+## ⚠️ Important Deployment Notes
+
+Before deploying, ensure these settings are correct to avoid common issues:
+
+### Required Settings in `terraform.tfvars`
+
+```hcl
+# NAT Gateway MUST be enabled for Lambda to reach ALB
+enable_nat_gateway = true
+
+# Lex bot alias ID - set after creating alias manually
+lex_bot_alias_id = "YOUR_ALIAS_ID"  # Get from: aws lexv2-models list-bot-aliases
+```
+
+### Common Deployment Pitfalls
+
+| Issue | Cause | Prevention |
+|-------|-------|------------|
+| Lambda timeout (30s) | NAT Gateway disabled | Set `enable_nat_gateway = true` |
+| Lambda can't reach backend | Wrong BACKEND_URL port | ALB uses port 80, not 8000 |
+| "Invalid BotId/BotAliasId" | Stale alias ID | Update `lex_bot_alias_id` after creating alias |
+| "Alias isn't built" | DRAFT locale not built | Build locale and create version before alias |
+
+See [Troubleshooting](#troubleshooting) for detailed solutions.
+
+---
+
 ## Secrets Management
 
 PostgreSQL credentials are securely managed using **AWS Secrets Manager**:
@@ -1428,6 +1455,139 @@ aws cognito-identity get-identity-pool-roles \
 1. Create bot alias if missing (see Phase 1.4)
 2. Rebuild bot version in AWS Console
 3. Check Lambda has permission to call backend
+
+### Issue: Lambda Fulfillment Timeout (30s)
+
+**Symptoms:** Lex intents return "Failed" state, Lambda times out after 30 seconds.
+
+**Diagnosis:**
+
+```bash
+# Check Lambda environment variables
+aws lambda get-function-configuration \
+  --function-name $(terraform output -raw lambda_function_name) \
+  --query 'Environment.Variables'
+
+# Check CloudWatch logs for timeout
+aws logs tail /aws/lambda/$(terraform output -raw lambda_function_name) --follow
+
+# Verify NAT Gateway is enabled (Lambda needs it to reach ALB)
+aws ec2 describe-nat-gateways \
+  --filter "Name=vpc-id,Values=$(terraform output -raw vpc_id)" \
+  --query 'NatGateways[*].State'
+
+# Test ALB is reachable (from local machine)
+curl -v http://$(terraform output -raw alb_dns_name)/api/health
+```
+
+**Common Causes & Solutions:**
+
+1. **NAT Gateway disabled:** Lambda in private subnets cannot reach ALB without NAT Gateway
+   ```bash
+   # In terraform.tfvars, ensure:
+   enable_nat_gateway = true
+   
+   # Then re-apply
+   terraform apply -auto-approve
+   ```
+
+2. **Wrong BACKEND_URL port:** Lambda may be configured with wrong port
+   ```bash
+   # Check if BACKEND_URL has wrong port (should NOT have :8000)
+   # ALB listens on port 80, not 8000
+   grep "BACKEND_URL" terraform/lambda.tf
+   # Should be: BACKEND_URL = "http://${aws_lb.main.dns_name}"
+   # NOT: BACKEND_URL = "http://${aws_lb.main.dns_name}:8000"
+   ```
+
+3. **Security group blocking:** Lambda security group must allow outbound to ALB
+   ```bash
+   aws ec2 describe-security-groups \
+     --group-ids $(aws lambda get-function-configuration \
+       --function-name $(terraform output -raw lambda_function_name) \
+       --query 'VpcConfig.SecurityGroupIds[0]' --output text)
+   ```
+
+### Issue: Lex Bot Alias ID Mismatch
+
+**Symptoms:** Error "not a valid BotId/BotAliasId combination"
+
+**Diagnosis:**
+
+```bash
+# List actual bot aliases
+aws lexv2-models list-bot-aliases \
+  --bot-id $(terraform output -raw lex_bot_id) \
+  --query 'botAliasSummaries[*].{Name:botAliasName,Id:botAliasId}'
+
+# Compare with terraform.tfvars
+grep lex_bot_alias_id terraform.tfvars
+```
+
+**Solution:**
+
+```bash
+# Update terraform.tfvars with correct alias ID
+ALIAS_ID=$(aws lexv2-models list-bot-aliases \
+  --bot-id $(terraform output -raw lex_bot_id) \
+  --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' \
+  --output text)
+
+echo "lex_bot_alias_id = \"$ALIAS_ID\"" >> terraform.tfvars
+terraform apply -auto-approve
+```
+
+### Issue: Lex Bot Alias "Not Built"
+
+**Symptoms:** Error "The alias isn't built" when testing Lex
+
+**Diagnosis:**
+
+```bash
+# Check bot locale build status
+aws lexv2-models describe-bot-locale \
+  --bot-id $(terraform output -raw lex_bot_id) \
+  --bot-version DRAFT \
+  --locale-id en_US \
+  --query 'botLocaleStatus'
+```
+
+**Solution:**
+
+```bash
+BOT_ID=$(terraform output -raw lex_bot_id)
+
+# 1. Build the DRAFT locale
+aws lexv2-models build-bot-locale \
+  --bot-id $BOT_ID \
+  --bot-version DRAFT \
+  --locale-id en_US
+
+# 2. Wait for build to complete (~30-60 seconds)
+aws lexv2-models wait bot-locale-built \
+  --bot-id $BOT_ID \
+  --bot-version DRAFT \
+  --locale-id en_US
+
+# 3. Create a new bot version from DRAFT
+aws lexv2-models create-bot-version \
+  --bot-id $BOT_ID \
+  --bot-version-locale-specification '{"en_US":{"sourceBotVersion":"DRAFT"}}'
+
+# 4. Update the alias to use the new version
+ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $BOT_ID \
+  --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text)
+
+# Get latest version number
+LATEST_VERSION=$(aws lexv2-models list-bot-versions --bot-id $BOT_ID \
+  --query 'botVersionSummaries[-1].botVersion' --output text)
+
+aws lexv2-models update-bot-alias \
+  --bot-id $BOT_ID \
+  --bot-alias-id $ALIAS_ID \
+  --bot-alias-name prod \
+  --bot-version $LATEST_VERSION
+```
 
 ### Issue: Audio Not Generating
 

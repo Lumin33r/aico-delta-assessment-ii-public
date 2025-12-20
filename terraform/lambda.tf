@@ -28,7 +28,7 @@ resource "aws_lambda_function" "lex_fulfillment" {
 
   environment {
     variables = {
-      BACKEND_URL = "http://${aws_lb.main.dns_name}:8000"
+      BACKEND_URL = "http://${aws_lb.main.dns_name}"
       LOG_LEVEL   = "INFO"
     }
   }

@@ -146,9 +146,9 @@ variable "create_cognito" {
 }
 
 variable "enable_nat_gateway" {
-  description = "Whether to create NAT Gateway for private subnets"
+  description = "Whether to create NAT Gateway for private subnets. Required for Lambda to reach ALB."
   type        = bool
-  default     = false # Set to true for production
+  default     = true # Required when Lambda is in private subnets and needs to reach ALB
 }
 
 # -----------------------------------------------------------------------------
@@ -205,9 +205,9 @@ variable "git_repo_url" {
 # -----------------------------------------------------------------------------
 
 variable "lex_bot_alias_id" {
-  description = "Lex Bot Alias ID (created manually after initial deploy)"
+  description = "Lex Bot Alias ID (created manually after initial deploy). Leave empty for initial deployment."
   type        = string
-  default     = "JBEV8XIGQG" # Updated 2025-12-20 - prod alias
+  default     = "" # Do not hardcode - set in terraform.tfvars after creating alias
 }
 
 # -----------------------------------------------------------------------------
