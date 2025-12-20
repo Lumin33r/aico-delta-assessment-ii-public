@@ -207,7 +207,7 @@ variable "git_repo_url" {
 variable "lex_bot_alias_id" {
   description = "Lex Bot Alias ID (created manually after initial deploy). Leave empty for initial deployment."
   type        = string
-  default     = "" # Do not hardcode - set in terraform.tfvars after creating alias
+  default     = "VGKGSRP1W1" # Updated 2025-12-20 - prod alias
 }
 
 # -----------------------------------------------------------------------------
