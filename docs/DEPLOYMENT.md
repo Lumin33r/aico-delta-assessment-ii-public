@@ -33,18 +33,23 @@ aws lexv2-models create-bot-alias \
 
 # Note the botAliasId from the output (e.g., "53YB7VL04U")
 
-# 3. Update terraform.tfvars (NOT variables.tf) with the New Alias ID
+# 3. Update terraform.tfvars with the New Alias ID
 ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $BOT_ID --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text --region us-west-2)
 echo "New Alias ID: $ALIAS_ID"
 
-# Update terraform.tfvars (this file is gitignored but used by terraform apply)
+# Update terraform.tfvars
 sed -i "s/lex_bot_alias_id = \"[A-Z0-9]*\"/lex_bot_alias_id = \"$ALIAS_ID\"/" terraform.tfvars
 
 # Verify the change
 grep lex_bot_alias_id terraform.tfvars
 
-# 4. Re-apply Terraform (this updates the launch template user_data)
+# 4. Re-apply Terraform and commit the change
 terraform apply -auto-approve
+
+# Commit the updated alias ID so future deployments have it
+git add terraform.tfvars
+git commit -m "Update Lex bot alias ID to $ALIAS_ID"
+git push origin
 
 # 5. Refresh instances to pick up new user_data
 aws autoscaling start-instance-refresh \
@@ -53,9 +58,10 @@ aws autoscaling start-instance-refresh \
   --region us-west-2
 
 # 6. Wait for Instance Refresh and Test
+ASG_NAME=$(terraform output -raw backend_asg_name)
 while true; do
   STATUS=$(aws autoscaling describe-instance-refreshes \
-    --auto-scaling-group-name "Troy-ai-tutor-dev-backend-asg" \
+    --auto-scaling-group-name "$ASG_NAME" \
     --region us-west-2 \
     --query 'InstanceRefreshes[0].Status' --output text)
   echo "$(date): $STATUS"
