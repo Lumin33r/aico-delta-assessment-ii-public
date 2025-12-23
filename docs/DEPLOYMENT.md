@@ -33,32 +33,40 @@ aws lexv2-models create-bot-alias \
 
 # Note the botAliasId from the output (e.g., "53YB7VL04U")
 
-# 3. Update variables.tf with the New Alias ID and Push to Git
-# Extract alias ID and update variables.tf
+# 3. Update terraform.tfvars (NOT variables.tf) with the New Alias ID
 ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $BOT_ID --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text --region us-west-2)
 echo "New Alias ID: $ALIAS_ID"
 
-# Update the default value in variables.tf
-sed -i "s/default.*=.*\"[A-Z0-9]*\".*# .*alias/default     = \"$ALIAS_ID\" # Updated $(date +%Y-%m-%d) - prod alias/" variables.tf
+# Update terraform.tfvars (this file is gitignored but used by terraform apply)
+sed -i "s/lex_bot_alias_id = \"[A-Z0-9]*\"/lex_bot_alias_id = \"$ALIAS_ID\"/" terraform.tfvars
 
-# Commit and push (CRITICAL: EC2 instances pull from git)
-cd .. && git add terraform/variables.tf
-git commit -m "Update Lex bot alias ID to $ALIAS_ID"
-git push
-cd terraform
+# Verify the change
+grep lex_bot_alias_id terraform.tfvars
 
-# 4. Re-apply Terraform and Refresh Instances
+# 4. Re-apply Terraform (this updates the launch template user_data)
 terraform apply -auto-approve
 
+# 5. Refresh instances to pick up new user_data
 aws autoscaling start-instance-refresh \
   --auto-scaling-group-name "$(terraform output -raw backend_asg_name)" \
   --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 300}' \
   --region us-west-2
 
-# 5. Wait for Instance Refresh and Test
-sleep 180  # Wait ~3 minutes
+# 6. Wait for Instance Refresh and Test
+while true; do
+  STATUS=$(aws autoscaling describe-instance-refreshes \
+    --auto-scaling-group-name "Troy-ai-tutor-dev-backend-asg" \
+    --region us-west-2 \
+    --query 'InstanceRefreshes[0].Status' --output text)
+  echo "$(date): $STATUS"
+  [[ "$STATUS" == "Successful" || "$STATUS" == "Failed" || "$STATUS" == "Cancelled" ]] && break
+  sleep 30
+done
+
 ALB_DNS=$(terraform output -raw alb_dns_name)
 curl http://$ALB_DNS/api/health
+
+echo http://$ALB_DNS
 ```
 
 The EC2 instances will automatically:
