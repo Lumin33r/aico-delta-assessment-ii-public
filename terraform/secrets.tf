@@ -21,7 +21,7 @@ resource "random_password" "postgres" {
 resource "aws_secretsmanager_secret" "postgres" {
   name                    = "${var.project_name}-${var.environment}/postgres-credentials"
   description             = "PostgreSQL credentials for AI Tutor application"
-  recovery_window_in_days = var.environment == "prod" ? 30 : 7
+  recovery_window_in_days = 0 # Allows immediate deletion/recreation (no 7-day wait)
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-postgres-secret"

@@ -17,13 +17,36 @@ terraform init && terraform apply -auto-approve
 # The EC2 instances will fetch credentials at startup - no manual password management needed!
 # Secret location: terraform output postgres_secret_name
 
-# 2. Create Lex Bot Alias (After Initial Deploy)
-# Get values from terraform output
+# 2. Build Lex Bot Locale and Create Version (REQUIRED before alias!)
 BOT_ID=$(terraform output -raw lex_bot_id)
-BOT_VERSION=$(terraform output -raw lex_bot_version)
 LAMBDA_ARN=$(terraform output -raw lambda_function_arn)
 
-# Create the alias with Lambda fulfillment
+# Build the DRAFT locale (must be "Built" before creating a version)
+aws lexv2-models build-bot-locale \
+  --bot-id $BOT_ID \
+  --bot-version DRAFT \
+  --locale-id en_US \
+  --region us-west-2
+
+# Wait for locale to be built (takes ~30-60 seconds)
+echo "Waiting for locale to build..."
+while true; do
+  STATUS=$(aws lexv2-models describe-bot-locale \
+    --bot-id $BOT_ID --bot-version DRAFT --locale-id en_US \
+    --query 'botLocaleStatus' --output text --region us-west-2)
+  echo "Locale status: $STATUS"
+  [[ "$STATUS" == "Built" || "$STATUS" == "Failed" ]] && break
+  sleep 10
+done
+
+# Create a versioned snapshot from the built DRAFT
+BOT_VERSION=$(aws lexv2-models create-bot-version \
+  --bot-id $BOT_ID \
+  --bot-version-locale-specification '{"en_US":{"sourceBotVersion":"DRAFT"}}' \
+  --query 'botVersion' --output text --region us-west-2)
+echo "Created bot version: $BOT_VERSION"
+
+# 3. Create Lex Bot Alias pointing to the built version
 aws lexv2-models create-bot-alias \
   --bot-alias-name prod \
   --bot-id $BOT_ID \
@@ -31,9 +54,9 @@ aws lexv2-models create-bot-alias \
   --bot-alias-locale-settings "{\"en_US\":{\"enabled\":true,\"codeHookSpecification\":{\"lambdaCodeHook\":{\"lambdaARN\":\"$LAMBDA_ARN\",\"codeHookInterfaceVersion\":\"1.0\"}}}}" \
   --region us-west-2
 
-# Note the botAliasId from the output (e.g., "53YB7VL04U")
+# Note the botAliasId from the output (e.g., "X30YYAVCIB")
 
-# 3. Update terraform.tfvars with the New Alias ID
+# 4. Update terraform.tfvars with the New Alias ID
 ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $BOT_ID --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text --region us-west-2)
 echo "New Alias ID: $ALIAS_ID"
 
@@ -43,21 +66,21 @@ sed -i "s/lex_bot_alias_id = \"[A-Z0-9]*\"/lex_bot_alias_id = \"$ALIAS_ID\"/" te
 # Verify the change
 grep lex_bot_alias_id terraform.tfvars
 
-# 4. Re-apply Terraform and commit the change
-terraform apply -auto-approve
-
 # Commit the updated alias ID so future deployments have it
 git add terraform.tfvars
 git commit -m "Update Lex bot alias ID to $ALIAS_ID"
 git push origin
 
-# 5. Refresh instances to pick up new user_data
+# 5. Re-apply Terraform and commit the change
+terraform apply -auto-approve
+
+# 6. Refresh instances to pick up new user_data
 aws autoscaling start-instance-refresh \
   --auto-scaling-group-name "$(terraform output -raw backend_asg_name)" \
   --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 300}' \
   --region us-west-2
 
-# 6. Wait for Instance Refresh and Test
+# 7. Wait for Instance Refresh and Test
 ASG_NAME=$(terraform output -raw backend_asg_name)
 while true; do
   STATUS=$(aws autoscaling describe-instance-refreshes \
@@ -85,6 +108,355 @@ The EC2 instances will automatically:
 
 ---
 
+## Manual Infrastructure Verification
+
+After deployment, verify all AWS resources are correctly provisioned. Run these commands from the `terraform/` directory.
+
+> **Automated Option:** Run `./verify-infrastructure.sh` for a full automated check.
+
+### Get Terraform Outputs (Required Variables)
+
+```bash
+cd terraform
+
+# Export all required values
+ALB_DNS=$(terraform output -raw alb_dns_name)
+ASG_NAME=$(terraform output -raw backend_asg_name)
+BUCKET=$(terraform output -raw audio_bucket_name)
+LAMBDA=$(terraform output -raw lambda_function_name)
+LEX_BOT=$(terraform output -raw lex_bot_id)
+COGNITO=$(terraform output -raw cognito_identity_pool_id)
+VPC_ID=$(terraform output -raw vpc_id)
+REGION=$(terraform output -raw aws_region)
+SECRET_NAME=$(terraform output -raw postgres_secret_name)
+
+echo "ALB: $ALB_DNS"
+echo "ASG: $ASG_NAME"
+echo "S3: $BUCKET"
+echo "Lambda: $LAMBDA"
+echo "Lex Bot: $LEX_BOT"
+echo "Cognito: $COGNITO"
+echo "VPC: $VPC_ID"
+```
+
+### 1. VPC & Networking
+
+```bash
+# Check VPC state
+aws ec2 describe-vpcs --vpc-ids $VPC_ID \
+  --query 'Vpcs[0].State' --output text
+# Expected: available
+
+# Count subnets (should be 4: 2 public, 2 private)
+aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'length(Subnets)' --output text
+# Expected: 4
+
+# Check Internet Gateway
+aws ec2 describe-internet-gateways \
+  --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+  --query 'InternetGateways[0].Attachments[0].State' --output text
+# Expected: available
+
+# Check NAT Gateway (if enabled)
+aws ec2 describe-nat-gateways \
+  --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" \
+  --query 'NatGateways[0].State' --output text
+# Expected: available
+```
+
+### 2. Application Load Balancer
+
+```bash
+# Check ALB state
+aws elbv2 describe-load-balancers \
+  --query "LoadBalancers[?DNSName=='$ALB_DNS'].State.Code" --output text
+# Expected: active
+
+# Test ALB HTTP response
+curl -s -o /dev/null -w '%{http_code}' "http://$ALB_DNS/"
+# Expected: 200
+
+# Check target group health
+TG_ARN=$(aws elbv2 describe-target-groups \
+  --query "TargetGroups[?contains(TargetGroupName,'frontend-tg')].TargetGroupArn" \
+  --output text | awk '{print $1}')
+
+aws elbv2 describe-target-health --target-group-arn "$TG_ARN" \
+  --query 'TargetHealthDescriptions[*].{Target:Target.Id,Health:TargetHealth.State}' \
+  --output table
+# Expected: At least one target with "healthy" state
+```
+
+### 3. Auto Scaling Group
+
+```bash
+# Check ASG status
+aws autoscaling describe-auto-scaling-groups \
+  --auto-scaling-group-names "$ASG_NAME" \
+  --query 'AutoScalingGroups[0].{Desired:DesiredCapacity,Min:MinSize,Max:MaxSize,InService:length(Instances[?LifecycleState==`InService`])}' \
+  --output table
+# Expected: Desired=1, InService=1
+
+# List instances in ASG
+aws autoscaling describe-auto-scaling-groups \
+  --auto-scaling-group-names "$ASG_NAME" \
+  --query 'AutoScalingGroups[0].Instances[*].{InstanceId:InstanceId,State:LifecycleState,Health:HealthStatus}' \
+  --output table
+```
+
+### 4. EC2 Instances
+
+```bash
+# Get running instance IDs from ASG
+INSTANCE_IDS=$(aws ec2 describe-instances \
+  --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" \
+            "Name=instance-state-name,Values=running" \
+  --query 'Reservations[*].Instances[*].InstanceId' --output text)
+
+echo "Running instances: $INSTANCE_IDS"
+
+# Check instance details
+for INSTANCE_ID in $INSTANCE_IDS; do
+  aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].{ID:InstanceId,State:State.Name,Type:InstanceType,AZ:Placement.AvailabilityZone}' \
+    --output table
+done
+```
+
+### 5. S3 Bucket
+
+```bash
+# Check bucket exists
+aws s3api head-bucket --bucket "$BUCKET" && echo "✓ Bucket exists"
+# Expected: No error output
+
+# Check CORS configuration
+aws s3api get-bucket-cors --bucket "$BUCKET" \
+  --query 'CORSRules[0].AllowedMethods' --output text
+# Expected: GET PUT POST DELETE
+
+# Check encryption
+aws s3api get-bucket-encryption --bucket "$BUCKET" \
+  --query 'ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm' \
+  --output text
+# Expected: AES256
+```
+
+### 6. Lambda Function
+
+```bash
+# Check Lambda state
+aws lambda get-function --function-name "$LAMBDA" \
+  --query 'Configuration.{State:State,Runtime:Runtime,Memory:MemorySize,Timeout:Timeout}' \
+  --output table
+# Expected: State=Active, Runtime=python3.11
+
+# Check Lambda has VPC config (required to reach ALB)
+aws lambda get-function --function-name "$LAMBDA" \
+  --query 'Configuration.VpcConfig.SubnetIds' --output text
+# Expected: subnet IDs (not empty)
+
+# Check recent Lambda invocations (last 5 minutes)
+aws logs filter-log-events \
+  --log-group-name "/aws/lambda/$LAMBDA" \
+  --start-time $(($(date +%s) - 300))000 \
+  --query 'events[*].message' --output text | head -20
+```
+
+### 7. Amazon Lex Bot
+
+```bash
+# Check bot status
+aws lexv2-models describe-bot --bot-id "$LEX_BOT" \
+  --query '{Status:botStatus,Name:botName}' --output table --region $REGION
+# Expected: Status=Available
+
+# List bot aliases
+aws lexv2-models list-bot-aliases --bot-id "$LEX_BOT" \
+  --query 'botAliasSummaries[*].{Name:botAliasName,ID:botAliasId,Version:botVersion,Status:botAliasStatus}' \
+  --output table --region $REGION
+# Expected: At least one alias with Status=Available
+
+# Check alias has Lambda fulfillment configured
+ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id "$LEX_BOT" \
+  --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' \
+  --output text --region $REGION)
+
+aws lexv2-models describe-bot-alias --bot-id "$LEX_BOT" --bot-alias-id "$ALIAS_ID" \
+  --query 'botAliasLocaleSettings.en_US.codeHookSpecification.lambdaCodeHook.lambdaARN' \
+  --output text --region $REGION
+# Expected: Lambda ARN
+```
+
+### 8. Cognito Identity Pool
+
+```bash
+# Check identity pool
+aws cognito-identity describe-identity-pool --identity-pool-id "$COGNITO" \
+  --query '{Name:IdentityPoolName,AllowUnauth:AllowUnauthenticatedIdentities}' \
+  --output table
+# Expected: AllowUnauth=True
+
+# Check IAM roles attached
+aws cognito-identity get-identity-pool-roles --identity-pool-id "$COGNITO" \
+  --query 'Roles' --output table
+# Expected: unauthenticated role attached
+```
+
+### 9. Secrets Manager
+
+```bash
+# Check secret exists
+aws secretsmanager describe-secret --secret-id "$SECRET_NAME" \
+  --query '{Name:Name,ARN:ARN}' --output table
+# Expected: Secret name and ARN
+
+# Verify secret has value (don't print actual password!)
+aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" \
+  --query 'SecretString' --output text | jq 'keys'
+# Expected: ["database", "password", "port", "username"]
+```
+
+### 10. PostgreSQL Database
+
+```bash
+# Get first running instance ID from ASG
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" \
+            "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].InstanceId' --output text)
+
+# Option A: Check PostgreSQL via SSM Session (interactive)
+aws ssm start-session --target $INSTANCE_ID
+# Then run inside the session:
+cd /opt/ai-tutor/app
+sudo docker compose exec postgres pg_isready -U aitutor
+# Expected: /var/run/postgresql:5432 - accepting connections
+
+# Check PostgreSQL is running
+sudo docker compose exec postgres psql -U aitutor -d aitutor -c "SELECT version();"
+# Expected: PostgreSQL version string
+
+# List tables (if migrations have run)
+sudo docker compose exec postgres psql -U aitutor -d aitutor -c "\dt"
+# Expected: List of tables or "Did not find any relations"
+
+# Check database connections
+sudo docker compose exec postgres psql -U aitutor -d aitutor -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'aitutor';"
+# Expected: Number of active connections
+
+# Exit SSM session
+exit
+
+# Option B: Check PostgreSQL via API health endpoint (non-interactive)
+curl -s "http://$ALB_DNS/api/health" | jq '.services.database'
+# Expected: {"status": "healthy", "connected": true}
+
+# Option C: Run a quick database check via SSM run-command (non-interactive)
+aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["cd /opt/ai-tutor/app && sudo docker compose exec -T postgres pg_isready -U aitutor"]' \
+  --query 'Command.CommandId' --output text
+
+# Check command output (wait a few seconds for execution)
+COMMAND_ID=$(aws ssm send-command \
+  --instance-ids "$INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["cd /opt/ai-tutor/app && sudo docker compose exec -T postgres pg_isready -U aitutor"]' \
+  --query 'Command.CommandId' --output text)
+
+sleep 5
+aws ssm get-command-invocation \
+  --command-id "$COMMAND_ID" \
+  --instance-id "$INSTANCE_ID" \
+  --query '{Status:Status,Output:StandardOutputContent}' --output table
+# Expected: Status=Success, Output contains "accepting connections"
+```
+
+### 11. API Health Checks
+
+```bash
+# Full API health check
+curl -s "http://$ALB_DNS/api/health" | jq .
+# Expected: {"status": "healthy", "services": {...}}
+
+# Check individual services from health response
+curl -s "http://$ALB_DNS/api/health" | jq '.services'
+# Expected: ollama, database status
+
+# Test frontend is serving
+curl -s -o /dev/null -w '%{http_code}' "http://$ALB_DNS/"
+# Expected: 200
+```
+
+### 12. CloudWatch Logs
+
+```bash
+# Check Lambda log group exists
+aws logs describe-log-groups \
+  --log-group-name-prefix "/aws/lambda/$LAMBDA" \
+  --query 'logGroups[0].logGroupName' --output text
+# Expected: /aws/lambda/<function-name>
+
+# Tail Lambda logs (live)
+aws logs tail "/aws/lambda/$LAMBDA" --follow
+
+# Get recent errors
+aws logs filter-log-events \
+  --log-group-name "/aws/lambda/$LAMBDA" \
+  --filter-pattern "ERROR" \
+  --start-time $(($(date +%s) - 3600))000 \
+  --query 'events[*].message' --output text
+```
+
+### 13. SSM Session (Connect to EC2)
+
+```bash
+# Get first running instance ID
+INSTANCE_ID=$(echo $INSTANCE_IDS | awk '{print $1}')
+
+# Start SSM session to EC2
+aws ssm start-session --target $INSTANCE_ID
+
+# Once connected, check Docker containers:
+cd /opt/ai-tutor/app
+sudo docker compose ps
+
+# Check container logs
+sudo docker compose logs --tail=50 backend
+sudo docker compose logs --tail=50 frontend
+
+# Check Ollama model is loaded
+sudo docker compose exec ollama ollama list
+
+# Check PostgreSQL connection
+sudo docker compose exec postgres pg_isready -U aitutor
+
+# Exit SSM session
+exit
+```
+
+### Verification Summary Command
+
+Run this one-liner to get a quick status of all resources:
+
+```bash
+echo "=== Quick Infrastructure Status ===" && \
+echo "VPC: $(aws ec2 describe-vpcs --vpc-ids $VPC_ID --query 'Vpcs[0].State' --output text)" && \
+echo "ALB: $(aws elbv2 describe-load-balancers --query "LoadBalancers[?DNSName=='$ALB_DNS'].State.Code" --output text)" && \
+echo "ASG Instances: $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --query 'AutoScalingGroups[0].Instances | length(@)' --output text)" && \
+echo "S3: $(aws s3api head-bucket --bucket "$BUCKET" 2>&1 && echo "exists")" && \
+echo "Lambda: $(aws lambda get-function --function-name "$LAMBDA" --query 'Configuration.State' --output text)" && \
+echo "Lex: $(aws lexv2-models describe-bot --bot-id "$LEX_BOT" --query 'botStatus' --output text --region $REGION)" && \
+echo "Cognito: $(aws cognito-identity describe-identity-pool --identity-pool-id "$COGNITO" --query 'IdentityPoolName' --output text)" && \
+echo "API Health: $(curl -s "http://$ALB_DNS/api/health" | jq -r '.status')" && \
+echo "URL: http://$ALB_DNS"
+```
+
+---
+
 ## ⚠️ Important Deployment Notes
 
 Before deploying, ensure these settings are correct to avoid common issues:
@@ -101,13 +473,13 @@ lex_bot_alias_id = "YOUR_ALIAS_ID"  # Get from: aws lexv2-models list-bot-aliase
 
 ### Common Deployment Pitfalls
 
-| Issue                      | Cause                    | Prevention                                     |
-| -------------------------- | ------------------------ | ---------------------------------------------- |
-| Lambda timeout (30s)       | NAT Gateway disabled     | Set `enable_nat_gateway = true`                |
-| Lambda can't reach backend | Wrong BACKEND_URL port   | ALB uses port 80, not 8000                     |
-| "Invalid BotId/BotAliasId" | Stale alias ID           | Update `lex_bot_alias_id` after creating alias |
-| "Alias isn't built"        | DRAFT locale not built   | Build locale and create version before alias   |
-| "Endpoint not found"       | Missing backend endpoint | Ensure all Lambda endpoints exist in backend   |
+| Issue                      | Cause                           | Prevention                                                 |
+| -------------------------- | ------------------------------- | ---------------------------------------------------------- |
+| Lambda timeout (30s)       | NAT Gateway disabled            | Set `enable_nat_gateway = true`                            |
+| Lambda can't reach backend | Wrong BACKEND_URL port          | ALB uses port 80, not 8000                                 |
+| "Invalid BotId/BotAliasId" | Stale alias ID                  | Update `lex_bot_alias_id` after creating alias             |
+| "Alias isn't built"        | Alias points to unbuilt version | Run `build-bot-locale` → `create-bot-version` → then alias |
+| "Endpoint not found"       | Missing backend endpoint        | Ensure all Lambda endpoints exist in backend               |
 
 See [Troubleshooting](#troubleshooting) for detailed solutions.
 
@@ -171,43 +543,90 @@ docker compose up -d
 ## Containerized Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              AWS Cloud (VPC)                                 │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    Application Load Balancer                         │    │
-│  │                         (Port 80/443)                                │    │
-│  └──────────────────────────────┬──────────────────────────────────────┘    │
-│                                 │                                            │
-│            ┌────────────────────┼────────────────────┐                      │
-│            ▼                    │                    ▼                      │
-│  ┌──────────────────┐          │          ┌──────────────────┐             │
-│  │   EC2 Instance 1 │          │          │   EC2 Instance 2 │             │
-│  │   (us-west-2a)   │          │          │   (us-west-2b)   │             │
-│  │                  │          │          │                  │             │
-│  │ ┌──────────────┐ │          │          │ ┌──────────────┐ │             │
-│  │ │   Frontend   │ │          │          │ │   Frontend   │ │             │
-│  │ │ (Nginx:80)   │◀┼──────────┘──────────┼▶│ (Nginx:80)   │ │             │
-│  │ └──────┬───────┘ │                     │ └──────┬───────┘ │             │
-│  │        │ /api    │                     │        │ /api    │             │
-│  │        ▼         │                     │        ▼         │             │
-│  │ ┌──────────────┐ │                     │ ┌──────────────┐ │             │
-│  │ │   Backend    │ │                     │ │   Backend    │ │             │
-│  │ │(Flask:8000)  │ │                     │ │(Flask:8000)  │ │             │
-│  │ └──────┬───────┘ │                     │ └──────┬───────┘ │             │
-│  │        │         │                     │        │         │             │
-│  │        ▼         │                     │        ▼         │             │
-│  │ ┌──────────────┐ │                     │ ┌──────────────┐ │             │
-│  │ │   Ollama     │ │                     │ │   Ollama     │ │             │
-│  │ │ (LLM:11434) │ │                     │ │ (LLM:11434) │ │             │
-│  │ └──────────────┘ │                     │ └──────────────┘ │             │
-│  └──────────────────┘                     └──────────────────┘             │
-│                                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐    │
-│  │  S3 Audio   │  │   Lex Bot   │  │   Cognito   │  │     Lambda      │    │
-│  │   Bucket    │  │    (V2)     │  │Identity Pool│  │  Fulfillment    │    │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                        AWS Cloud - VPC (10.0.0.0/16)                                     │
+│                                                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                      PUBLIC SUBNETS (2 AZs)                                        │  │
+│  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐   │  │
+│  │  │                          Application Load Balancer (Port 80)                                │   │  │
+│  │  │                              Security Group: alb-sg                                         │   │  │
+│  │  └────────────────────────────────────────┬────────────────────────────────────────────────────┘   │  │
+│  │                                           │                                                        │  │
+│  │           ┌───────────────────────────────┼───────────────────────────────┐                        │  │
+│  │           ▼                               │                               ▼                        │  │
+│  │  ┌─────────────────────────────┐         │         ┌─────────────────────────────┐                │  │
+│  │  │   EC2 Instance (us-west-2a) │         │         │   EC2 Instance (us-west-2b) │                │  │
+│  │  │   Auto Scaling Group        │         │         │   Auto Scaling Group        │                │  │
+│  │  │   Security Group: backend-sg│         │         │   Security Group: backend-sg│                │  │
+│  │  │   IAM Role: backend-role    │         │         │   IAM Role: backend-role    │                │  │
+│  │  │                             │         │         │                             │                │  │
+│  │  │  ┌───────────────────────┐  │         │         │  ┌───────────────────────┐  │                │  │
+│  │  │  │ Frontend (Nginx:80)   │◀─┼─────────┘─────────┼─▶│ Frontend (Nginx:80)   │  │                │  │
+│  │  │  └───────────┬───────────┘  │                   │  └───────────┬───────────┘  │                │  │
+│  │  │              │ /api proxy   │                   │              │ /api proxy   │                │  │
+│  │  │              ▼              │                   │              ▼              │                │  │
+│  │  │  ┌───────────────────────┐  │                   │  ┌───────────────────────┐  │                │  │
+│  │  │  │ Backend (Flask:8000)  │  │                   │  │ Backend (Flask:8000)  │  │                │  │
+│  │  │  │ Gunicorn WSGI Server  │  │                   │  │ Gunicorn WSGI Server  │  │                │  │
+│  │  │  └───────────┬───────────┘  │                   │  └───────────┬───────────┘  │                │  │
+│  │  │              │              │                   │              │              │                │  │
+│  │  │              ▼              │                   │              ▼              │                │  │
+│  │  │  ┌───────────────────────┐  │                   │  ┌───────────────────────┐  │                │  │
+│  │  │  │ Ollama (LLM:11434)    │  │                   │  │ Ollama (LLM:11434)    │  │                │  │
+│  │  │  └───────────────────────┘  │                   │  └───────────────────────┘  │                │  │
+│  │  │              │              │                   │              │              │                │  │
+│  │  │              ▼              │                   │              ▼              │                │  │
+│  │  │  ┌───────────────────────┐  │                   │  ┌───────────────────────┐  │                │  │
+│  │  │  │ PostgreSQL (5432)     │  │                   │  │ PostgreSQL (5432)     │  │                │  │
+│  │  │  └───────────────────────┘  │                   │  └───────────────────────┘  │                │  │
+│  │  └─────────────────────────────┘                   └─────────────────────────────┘                │  │
+│  │                                                                                                    │  │
+│  │  ┌──────────────────┐                                                                              │  │
+│  │  │ Internet Gateway │◀──────────────────────── Route: 0.0.0.0/0                                   │  │
+│  │  └──────────────────┘                                                                              │  │
+│  │                                                                                                    │  │
+│  │  ┌──────────────────┐                                                                              │  │
+│  │  │  NAT Gateway     │◀──────────────────────── For Lambda outbound access                         │  │
+│  │  │  (Elastic IP)    │                                                                              │  │
+│  │  └──────────────────┘                                                                              │  │
+│  └────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                     PRIVATE SUBNETS (2 AZs)                                        │  │
+│  │                                                                                                    │  │
+│  │  ┌─────────────────────────────────┐    ┌───────────────────────────────────────────────────────┐  │  │
+│  │  │   Lambda: lex-fulfillment       │    │              VPC Endpoints (Interface)               │  │  │
+│  │  │   Runtime: Python 3.11          │    │   ┌─────────────────────────────────────────────┐    │  │  │
+│  │  │   Security Group: lambda-sg     │    │   │ SSM Endpoint     (com.amazonaws.*.ssm)      │    │  │  │
+│  │  │   IAM Role: lambda-execution    │    │   │ SSM Messages     (com.amazonaws.*.ssmmsg)   │    │  │  │
+│  │  │                                 │    │   │ EC2 Messages     (com.amazonaws.*.ec2msg)   │    │  │  │
+│  │  │   Env: BACKEND_URL = http://ALB │    │   │ Security Group: vpce-sg                     │    │  │  │
+│  │  └─────────────────────────────────┘    │   └─────────────────────────────────────────────┘    │  │  │
+│  │                                         └───────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                       AWS MANAGED SERVICES                                         │  │
+│  │                                                                                                    │  │
+│  │  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐   │  │
+│  │  │  S3 Audio Bucket  │  │  Amazon Lex V2    │  │ Cognito Identity  │  │  Secrets Manager      │   │  │
+│  │  │  - AES256 Encrypt │  │  - Tutor Bot      │  │    Pool           │  │  - postgres-creds     │   │  │
+│  │  │  - Versioning     │  │  - en_US Locale   │  │  - Unauth Access  │  │  - Auto-generated     │   │  │
+│  │  │  - Lifecycle      │  │  - Neural Voice   │  │  - IAM Roles      │  │    password           │   │  │
+│  │  │  - CORS Enabled   │  │  - Lambda Hook    │  │                   │  │                       │   │  │
+│  │  └───────────────────┘  └───────────────────┘  └───────────────────┘  └───────────────────────┘   │  │
+│  │                                                                                                    │  │
+│  │  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────────────────────────────┐   │  │
+│  │  │  Amazon Polly     │  │  CloudWatch       │  │  IAM Roles                                    │   │  │
+│  │  │  - TTS Synthesis  │  │  - Lambda Logs    │  │  - backend-role (EC2): S3, Polly, Secrets,   │   │  │
+│  │  │  - Neural Voices  │  │  - CPU Alarms     │  │    CloudWatch, SSM                           │   │  │
+│  │  │                   │  │  - Auto Scaling   │  │  - lambda-execution: VPC, ELB, Logs          │   │  │
+│  │  │                   │  │    Triggers       │  │  - cognito-unauth: Lex RecognizeText/Speech  │   │  │
+│  │  │                   │  │                   │  │  - lex-service: Bot operations               │   │  │
+│  │  └───────────────────┘  └───────────────────┘  └───────────────────────────────────────────────┘   │  │
+│  └────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Container Stack (per EC2 instance)
@@ -264,28 +683,100 @@ Ensure your IAM user/role has permissions for:
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              AWS Cloud                                   │
-│                                                                          │
-│  ┌──────────┐     ┌─────────────┐     ┌──────────────────────────────┐  │
-│  │ CloudFront│────▶│     ALB     │────▶│  EC2 (Auto Scaling Group)   │  │
-│  │ (Frontend)│     │  (Backend)  │     │  - Flask API                │  │
-│  └──────────┘     └─────────────┘     │  - Ollama LLM               │  │
-│       │                                │  - Gunicorn                 │  │
-│       │                                └──────────────────────────────┘  │
-│       │                                              │                   │
-│       ▼                                              ▼                   │
-│  ┌──────────┐     ┌─────────────┐     ┌──────────────────────────────┐  │
-│  │    S3    │     │  Lex V2 Bot │────▶│     Lambda Fulfillment      │  │
-│  │ (Static) │     │             │     │                              │  │
-│  └──────────┘     └─────────────┘     └──────────────────────────────┘  │
-│                          │                                               │
-│                          ▼                                               │
-│                   ┌─────────────┐     ┌──────────────────────────────┐  │
-│                   │  Cognito    │     │         S3 (Audio)           │  │
-│                   │Identity Pool│     │                              │  │
-│                   └─────────────┘     └──────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    APPLICATION WORKFLOW DIAGRAM                                          │
+│                                                                                                          │
+│  ┌─────────────────┐                                                                                     │
+│  │      USER       │                                                                                     │
+│  │   (Browser)     │                                                                                     │
+│  └────────┬────────┘                                                                                     │
+│           │                                                                                              │
+│           │ HTTP Request                                                                                 │
+│           ▼                                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                              FRONTEND FLOW (React + Lex Integration)                             │   │
+│  │                                                                                                  │   │
+│  │   ┌──────────────────┐     ┌──────────────────────┐     ┌───────────────────────────────────┐   │   │
+│  │   │   ALB (Port 80)  │────▶│  Nginx (Port 80)     │────▶│  React Frontend                   │   │   │
+│  │   │   Public Facing  │     │  - Static Assets     │     │  - Chat UI                        │   │   │
+│  │   └──────────────────┘     │  - /api/* proxy      │     │  - Voice Input/Output             │   │   │
+│  │                            └──────────────────────┘     │  - Lesson Display                 │   │   │
+│  │                                                         └───────────────────────────────────┘   │   │
+│  └──────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+│           │                                              │                                               │
+│           │ /api/* requests                              │ Voice/Text via AWS SDK                        │
+│           ▼                                              ▼                                               │
+│  ┌──────────────────────────────────────────┐   ┌────────────────────────────────────────────────────┐  │
+│  │           BACKEND API FLOW               │   │              LEX CONVERSATION FLOW                 │  │
+│  │                                          │   │                                                    │  │
+│  │  ┌────────────────────────────────────┐  │   │  ┌────────────────┐    ┌────────────────────────┐  │  │
+│  │  │  Flask Backend (Port 8000)         │  │   │  │ Cognito        │───▶│  Amazon Lex V2 Bot     │  │  │
+│  │  │  - /api/health                     │  │   │  │ Identity Pool  │    │  - WelcomeIntent       │  │  │
+│  │  │  - /api/lessons                    │  │   │  │ (Unauth Creds) │    │  - ProvideURLIntent    │  │  │
+│  │  │  - /api/chat                       │  │   │  └────────────────┘    │  - StartLessonIntent   │  │  │
+│  │  │  - /api/tts                        │  │   │                        │  - NavigateIntent      │  │  │
+│  │  │  - /api/lex/* (Lex webhooks)       │  │   │                        │  - HelpIntent          │  │  │
+│  │  └────────┬───────────────────────────┘  │   │                        │  - FallbackIntent      │  │  │
+│  │           │                              │   │                        └───────────┬────────────┘  │  │
+│  │           ▼                              │   │                                    │               │  │
+│  │  ┌────────────────────────────────────┐  │   │                                    │ Fulfillment   │  │
+│  │  │  Ollama LLM (Port 11434)           │  │   │                                    ▼               │  │
+│  │  │  - Content Generation              │  │   │                        ┌────────────────────────┐  │  │
+│  │  │  - Lesson Summarization            │  │   │                        │  Lambda Function       │  │  │
+│  │  │  - Q&A Processing                  │  │   │                        │  - Process Intent      │  │  │
+│  │  └────────────────────────────────────┘  │   │                        │  - Call Backend API    │  │  │
+│  └──────────────────────────────────────────┘   │                        │  - Return Response     │  │  │
+│           │                                      │                        └───────────┬────────────┘  │  │
+│           │                                      │                                    │               │  │
+│           ▼                                      │                                    │ HTTP to ALB   │  │
+│  ┌──────────────────────────────────────────┐   │                                    │               │  │
+│  │           DATA PERSISTENCE               │   │                                    ▼               │  │
+│  │                                          │   │                        ┌────────────────────────┐  │  │
+│  │  ┌────────────────────────────────────┐  │   │                        │  Flask Backend         │  │  │
+│  │  │  PostgreSQL (Port 5432)            │  │   │                        │  /api/lex/welcome      │  │  │
+│  │  │  - User Sessions                   │  │   │                        │  /api/lex/set-url      │  │  │
+│  │  │  - Lesson Progress                 │  │   │                        │  /api/lex/navigate     │  │  │
+│  │  │  - Chat History                    │  │   │                        │  /api/lex/help         │  │  │
+│  │  │                                    │  │   │                        └────────────────────────┘  │  │
+│  │  │  Credentials from:                 │  │   │                                                    │  │
+│  │  │  Secrets Manager ───▶ .env file    │  │   └────────────────────────────────────────────────────┘  │
+│  │  └────────────────────────────────────┘  │                                                           │
+│  └──────────────────────────────────────────┘                                                           │
+│           │                                                                                              │
+│           ▼                                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                                    EXTERNAL AWS SERVICES                                         │   │
+│  │                                                                                                  │   │
+│  │   ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐                     │   │
+│  │   │  Amazon Polly     │     │  S3 Audio Bucket  │     │  CloudWatch       │                     │   │
+│  │   │  ─────────────    │     │  ─────────────    │     │  ─────────────    │                     │   │
+│  │   │  Backend calls    │     │  Store generated  │     │  Lambda Logs      │                     │   │
+│  │   │  SynthesizeSpeech │────▶│  audio files      │     │  CPU Metrics      │                     │   │
+│  │   │  for TTS          │     │  (lessons/, temp/)│     │  Auto Scale       │                     │   │
+│  │   └───────────────────┘     └───────────────────┘     │  Triggers         │                     │   │
+│  │                                                        └───────────────────┘                     │   │
+│  └──────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                                      WORKFLOW SEQUENCES                                          │   │
+│  │                                                                                                  │   │
+│  │  1. WEB CHAT FLOW:                                                                               │   │
+│  │     User ──▶ ALB ──▶ Nginx ──▶ Backend ──▶ Ollama ──▶ Response ──▶ User                         │   │
+│  │                                                                                                  │   │
+│  │  2. VOICE/LEX FLOW:                                                                              │   │
+│  │     User ──▶ Cognito ──▶ Lex Bot ──▶ Lambda ──▶ ALB ──▶ Backend ──▶ Response ──▶ User           │   │
+│  │                                                                                                  │   │
+│  │  3. TEXT-TO-SPEECH FLOW:                                                                         │   │
+│  │     Backend ──▶ Polly (SynthesizeSpeech) ──▶ S3 (audio storage) ──▶ Signed URL ──▶ User         │   │
+│  │                                                                                                  │   │
+│  │  4. AUTO SCALING FLOW:                                                                           │   │
+│  │     CloudWatch Alarm (CPU > 70%) ──▶ Scale Up Policy ──▶ ASG adds EC2                           │   │
+│  │     CloudWatch Alarm (CPU < 30%) ──▶ Scale Down Policy ──▶ ASG removes EC2                      │   │
+│  │                                                                                                  │   │
+│  │  5. SECRETS FLOW (EC2 Startup):                                                                  │   │
+│  │     EC2 Boot ──▶ IAM Role ──▶ Secrets Manager ──▶ Fetch Credentials ──▶ Inject to .env          │   │
+│  └──────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -1558,52 +2049,77 @@ terraform apply -auto-approve
 
 **Symptoms:** Error "The alias isn't built" when testing Lex
 
+**Root Cause:** The alias points to a bot version whose locale was never built. Lex requires: DRAFT locale built → versioned snapshot created → alias pointing to that version.
+
 **Diagnosis:**
 
 ```bash
-# Check bot locale build status
+# Check which version the alias points to
+aws lexv2-models describe-bot-alias \
+  --bot-id $(terraform output -raw lex_bot_id) \
+  --bot-alias-id $(grep lex_bot_alias_id terraform.tfvars | cut -d'"' -f2) \
+  --query '{version: botVersion, status: botAliasStatus}' \
+  --region us-west-2
+
+# Check that version's locale status (should be "Built")
 aws lexv2-models describe-bot-locale \
   --bot-id $(terraform output -raw lex_bot_id) \
-  --bot-version DRAFT \
+  --bot-version 1 \
   --locale-id en_US \
-  --query 'botLocaleStatus'
+  --query 'botLocaleStatus' \
+  --region us-west-2
 ```
 
 **Solution:**
 
 ```bash
 BOT_ID=$(terraform output -raw lex_bot_id)
+LAMBDA_ARN=$(terraform output -raw lambda_function_arn)
 
 # 1. Build the DRAFT locale
 aws lexv2-models build-bot-locale \
   --bot-id $BOT_ID \
   --bot-version DRAFT \
-  --locale-id en_US
+  --locale-id en_US \
+  --region us-west-2
 
 # 2. Wait for build to complete (~30-60 seconds)
-aws lexv2-models wait bot-locale-built \
-  --bot-id $BOT_ID \
-  --bot-version DRAFT \
-  --locale-id en_US
+echo "Waiting for locale to build..."
+while true; do
+  STATUS=$(aws lexv2-models describe-bot-locale \
+    --bot-id $BOT_ID --bot-version DRAFT --locale-id en_US \
+    --query 'botLocaleStatus' --output text --region us-west-2)
+  echo "Locale status: $STATUS"
+  [[ "$STATUS" == "Built" || "$STATUS" == "Failed" ]] && break
+  sleep 10
+done
 
 # 3. Create a new bot version from DRAFT
-aws lexv2-models create-bot-version \
+NEW_VERSION=$(aws lexv2-models create-bot-version \
   --bot-id $BOT_ID \
-  --bot-version-locale-specification '{"en_US":{"sourceBotVersion":"DRAFT"}}'
+  --bot-version-locale-specification '{"en_US":{"sourceBotVersion":"DRAFT"}}' \
+  --query 'botVersion' --output text \
+  --region us-west-2)
+echo "Created version: $NEW_VERSION"
 
-# 4. Update the alias to use the new version
+# 4. Update the alias to use the new version (with Lambda fulfillment!)
 ALIAS_ID=$(aws lexv2-models list-bot-aliases --bot-id $BOT_ID \
-  --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text)
-
-# Get latest version number
-LATEST_VERSION=$(aws lexv2-models list-bot-versions --bot-id $BOT_ID \
-  --query 'botVersionSummaries[-1].botVersion' --output text)
+  --query 'botAliasSummaries[?botAliasName==`prod`].botAliasId' --output text \
+  --region us-west-2)
 
 aws lexv2-models update-bot-alias \
   --bot-id $BOT_ID \
   --bot-alias-id $ALIAS_ID \
   --bot-alias-name prod \
-  --bot-version $LATEST_VERSION
+  --bot-version $NEW_VERSION \
+  --bot-alias-locale-settings "{\"en_US\":{\"enabled\":true,\"codeHookSpecification\":{\"lambdaCodeHook\":{\"lambdaARN\":\"$LAMBDA_ARN\",\"codeHookInterfaceVersion\":\"1.0\"}}}}" \
+  --region us-west-2
+
+# Verify alias is Available
+aws lexv2-models describe-bot-alias \
+  --bot-id $BOT_ID --bot-alias-id $ALIAS_ID \
+  --query '{version: botVersion, status: botAliasStatus}' \
+  --region us-west-2
 ```
 
 ### Issue: Lex Intent Returns "Endpoint not found"
@@ -1744,22 +2260,57 @@ watch -n 10 "aws autoscaling describe-auto-scaling-groups \
 cd terraform
 
 # Step 1: Empty S3 buckets (required before destroy)
+# Get the audio bucket name from terraform
 S3_BUCKET=$(terraform output -raw audio_bucket_name)
-aws s3 rm s3://${S3_BUCKET} --recursive
+echo "Emptying bucket: $S3_BUCKET"
 
-# If you created a frontend bucket
-aws s3 rm s3://${FRONTEND_BUCKET} --recursive
+# Delete all objects (including all versions if versioning is enabled)
+aws s3api list-object-versions --bucket "$S3_BUCKET" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json | \
+  jq -c '.[]' | while read obj; do
+    KEY=$(echo $obj | jq -r '.Key')
+    VERSION=$(echo $obj | jq -r '.VersionId')
+    echo "Deleting $KEY (version: $VERSION)"
+    aws s3api delete-object --bucket "$S3_BUCKET" --key "$KEY" --version-id "$VERSION"
+  done
+
+# Delete all delete markers (if versioning was enabled)
+aws s3api list-object-versions --bucket "$S3_BUCKET" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json | \
+  jq -c '.[]' | while read obj; do
+    KEY=$(echo $obj | jq -r '.Key')
+    VERSION=$(echo $obj | jq -r '.VersionId')
+    echo "Removing delete marker: $KEY (version: $VERSION)"
+    aws s3api delete-object --bucket "$S3_BUCKET" --key "$KEY" --version-id "$VERSION"
+  done
+
+# Alternative: Simple recursive delete (works if versioning is NOT enabled)
+# aws s3 rm s3://${S3_BUCKET} --recursive
+
+# Verify bucket is empty
+aws s3 ls s3://${S3_BUCKET} --recursive
+# Should return nothing
 
 # Step 2: Delete Lex bot alias (manual resource)
 LEX_BOT_ID=$(terraform output -raw lex_bot_id)
-aws lexv2-models list-bot-aliases --bot-id ${LEX_BOT_ID} --query 'botAliasSummaries[*].botAliasId' --output text | \
-  xargs -I {} aws lexv2-models delete-bot-alias --bot-alias-id {} --bot-id ${LEX_BOT_ID}
+aws lexv2-models list-bot-aliases --bot-id ${LEX_BOT_ID} --query 'botAliasSummaries[*].botAliasId' --output text --region us-west-2 | \
+  xargs -I {} aws lexv2-models delete-bot-alias --bot-alias-id {} --bot-id ${LEX_BOT_ID} --region us-west-2
 
 # Step 3: Destroy all infrastructure
 terraform destroy
 
 # Type 'yes' to confirm
 # Wait 5-10 minutes for all resources to be deleted
+```
+
+### Quick S3 Empty (One-Liner)
+
+If you just need to quickly empty the bucket without worrying about versions:
+
+```bash
+# Simple recursive delete
+aws s3 rm s3://$(terraform output -raw audio_bucket_name) --recursive
+
+# Or with bucket name directly
+aws s3 rm s3://YOUR-BUCKET-NAME --recursive
 ```
 
 ### Partial Cleanup (Scale Down to Save Costs)
