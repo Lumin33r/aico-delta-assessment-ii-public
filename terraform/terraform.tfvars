@@ -1,2 +1,2 @@
-lex_bot_alias_id = "5TICFXBTV7"
+lex_bot_alias_id = "4U9B9JCHFY"
 enable_nat_gateway = true
